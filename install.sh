@@ -45,6 +45,23 @@ fi
 # macOS: the Dock gets its icon from a bundle, never from Tk, so wrap the
 # script in a minimal .app. Iconutil ships with macOS, nothing to download.
 APP="$HOME/Applications/IPTV Channels.app"
+
+# Resolve the interpreter here, in a shell that can see the real PATH, and bake
+# it into the bundle: a Finder launch only sees /usr/bin:/bin:/usr/sbin:/sbin,
+# where python3 is Apple's build with Tk 8.5.
+PYTHON=${PYTHON:-$(command -v python3 || true)}
+if [ -z "$PYTHON" ]; then
+    echo "No python3 on PATH. Re-run as: PYTHON=/path/to/python3 $0" >&2
+    exit 1
+fi
+TK=$("$PYTHON" -c 'import tkinter; print(tkinter.Tcl().eval("info patchlevel"))' 2>/dev/null || true)
+case "$TK" in
+    8.[6-9]*|9.*|1[0-9].*) ;;
+    *)  echo "Note: $PYTHON reports Tcl/Tk ${TK:-unknown}, and the app needs 8.6 or newer." >&2
+        echo "      Re-run with: PYTHON=/path/to/python3 ./install.sh" >&2 ;;
+esac
+echo "Bundle interpreter: $PYTHON (Tk ${TK:-unknown})"
+
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 ICONSET="$TMP/icon.iconset"
@@ -81,11 +98,22 @@ PLIST
 
 cat > "$APP/Contents/MacOS/launch" <<LAUNCH
 #!/bin/sh
-exec "$BIN/iptv-channels.py" "\$@"
+# Finder hands the app a minimal PATH, where python3 is Apple's
+# CommandLineTools build - its Tk 8.5 paints an empty window. Exec the
+# interpreter install.sh verified instead, and keep a log so a failure leaves
+# evidence rather than a bouncing Dock icon.
+PY="$PYTHON"
+[ -x "\$PY" ] || PY=\$(command -v python3)
+LOG="\$HOME/Library/Logs/IPTV Channels.log"
+mkdir -p "\${LOG%/*}"
+exec "\$PY" "$BIN/iptv-channels.py" "\$@" >>"\$LOG" 2>&1
 LAUNCH
 chmod 755 "$APP/Contents/MacOS/launch"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 touch "$APP"
+mkdir -p "$HOME/Library/Logs"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+    -f "$APP" 2>/dev/null || true
 
 echo "Installed: $APP"
 echo "Open it from Applications, or: open \"$APP\""

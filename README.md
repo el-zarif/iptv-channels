@@ -25,6 +25,11 @@ step. mpv is the only external program.
 - Python 3 with Tkinter (included in the python.org and most distro builds)
 - `mpv`
 
+**The Tk must be 8.6 or newer.** Apple's `/usr/bin/python3` ships Tk 8.5,
+which paints an empty window; the app now says so instead of opening a grey
+rectangle. `install.sh` bakes the interpreter it was run with into the macOS
+bundle, so a Finder launch uses the good one.
+
 Linux also needs `python3-tk` if the distro splits it out. `pactl`
 (`pulseaudio-utils`) is optional — it is only used when `audio_sink` is
 configured.

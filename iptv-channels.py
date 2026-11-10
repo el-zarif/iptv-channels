@@ -47,6 +47,7 @@ USER_AGENT = "Mozilla/5.0"
 GROUP_ORDER = {"Live Events": 0, "PPV": 1, "TV": 2}
 ALL_GROUPS = "All groups"
 MAX_ROWS = 3000
+MIN_TK = (8, 6)
 DEFAULT_SOURCES = [
     {"name": "Ace (local proxy)", "type": "m3u",
      "url": "http://127.0.0.1:8080/playlist-direct.m3u8"},
@@ -54,6 +55,17 @@ DEFAULT_SOURCES = [
 
 
 # ------------------------------------------------------------------ platform
+def tk_too_old(root):
+    """Tk 8.5 paints an empty window on current macOS, and Apple's
+    CommandLineTools Python - the python3 a Finder launch resolves - ships
+    8.5.9. Reporting that beats opening a grey rectangle."""
+    try:
+        parts = str(root.tk.call("info", "patchlevel")).split(".")
+        return tuple(int(p) for p in parts[:2]) < MIN_TK
+    except (tk.TclError, ValueError):
+        return False
+
+
 def icon_file(name):
     """Icon assets live next to the script (repo checkout) or in the data
     directory install.sh uses; either is fine, neither is required."""
@@ -404,6 +416,8 @@ class FormDialog(tk.Toplevel):
 class Browser(tk.Tk):
     def __init__(self):
         super().__init__()
+        if tk_too_old(self):
+            self.fail_on_old_tk()
         self.title("IPTV Channels")
         self.geometry("900x660")
         self.minsize(680, 440)
@@ -426,6 +440,28 @@ class Browser(tk.Tk):
         self.load_current()
 
     # ---- layout ---------------------------------------------------------
+    def fail_on_old_tk(self):
+        version = self.tk.call("info", "patchlevel")
+        message = ("Tk %s cannot draw this window.\n\nStart the app with a "
+                   "Python that has Tk 8.6 or newer: on macOS the system "
+                   "Python ships Tk 8.5." % version)
+        sys.stderr.write("iptv-channels: %s\n"
+                         % message.replace("\n\n", " ").replace("\n", " "))
+        self.destroy()
+        # No Tk dialog: a Tk that cannot paint a frame cannot paint an alert
+        # either, and messagebox blocks forever on the click that never comes.
+        if IS_MAC and shutil.which("osascript"):
+            alert = message.replace("\\", "\\\\").replace('"', '\\"')
+            try:
+                subprocess.run(["osascript", "-e",
+                                'display alert "IPTV Channels" message "%s" '
+                                'as critical' % alert.replace("\n\n", " ")],
+                               timeout=15, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        raise SystemExit(1)
+
     def set_window_icon(self):
         """Window and taskbar icon. Tk 8.6 reads PNG directly; the .ico file is
         what Windows Explorer and the taskbar pick up. On macOS the Dock icon

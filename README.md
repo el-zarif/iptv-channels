@@ -46,6 +46,11 @@ sudo apt install python3-tk mpv
 ./install.sh
 ```
 
+On macOS the script refuses to install if the Python on `PATH` has
+Tk older than 8.6, because that combination opens an empty window; pass
+`--force` to install it anyway, or point it at a better interpreter with
+`PYTHON=/path/to/python3 ./install.sh`.
+
 That copies `iptv-channels.py` to `~/.local/bin` and the icon assets to
 `~/.local/share/iptv-channels/icons`. On Linux it also registers the
 `iptv-channels` icon in the hicolor theme and adds a menu entry; on macOS it

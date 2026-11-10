@@ -1,16 +1,68 @@
 #!/bin/sh
 # Install IPTV Channels for the current user (Linux, macOS).
 # Windows: no install step - run `pythonw iptv-channels.py`.
+#
+#   ./install.sh            install
+#   ./install.sh --force    install even if the Python found has Tk < 8.6
 set -e
 DIR=$(cd "$(dirname "$0")" && pwd)
 BIN="$HOME/.local/bin"
 DATA="$HOME/.local/share/iptv-channels"
 
-mkdir -p "$BIN" "$DATA/icons"
+FORCE=no
+for arg in "$@"; do
+    case "$arg" in
+        --force|-f) FORCE=yes ;;
+        -h|--help)
+            sed -n '1d;/^#/p;/^set -e/q' "$0" | sed 's/^# \{0,1\}//'
+            exit 0 ;;
+        *)
+            echo "$0: unknown option: $arg (try --help)" >&2
+            exit 2 ;;
+    esac
+done
+
 if [ ! -d "$DIR/icons" ]; then
     echo "No $DIR/icons directory - run: python3 make-icons.py" >&2
     exit 1
 fi
+
+# macOS runs the app from a bundle, so the interpreter has to be picked here,
+# where the real PATH is visible, and checked here: a Finder launch shows an
+# empty window instead of a Python traceback. Refuse rather than install a
+# bundle that cannot draw.
+if [ "$(uname -s)" = "Darwin" ]; then
+    PYTHON=${PYTHON:-$(command -v python3 || true)}
+    if [ -z "$PYTHON" ]; then
+        echo "No python3 on PATH. Re-run as: PYTHON=/path/to/python3 $0" >&2
+        exit 1
+    fi
+    TK=$("$PYTHON" -c 'import tkinter; print(tkinter.Tcl().eval("info patchlevel"))' 2>/dev/null || true)
+    if [ -z "$TK" ]; then
+        PROBLEM="$PYTHON cannot import tkinter"
+    else
+        PROBLEM="$PYTHON has Tcl/Tk $TK, and the app needs 8.6 or newer"
+    fi
+    case "$TK" in
+        8.[6-9]*|9.*|1[0-9].*) OK=yes ;;
+        *) OK=no ;;
+    esac
+    if [ "$OK" = no ]; then
+        if [ "$FORCE" = yes ]; then
+            echo "Warning: $PROBLEM - installing anyway (--force)." >&2
+            echo "         The app will refuse to open until it gets a newer Tk." >&2
+        else
+            echo "Refusing: $PROBLEM." >&2
+            echo "Install the app against a working Python, for example:" >&2
+            echo "  PYTHON=/path/to/python3 $0" >&2
+            echo "Or install this interpreter anyway with: $0 --force" >&2
+            exit 1
+        fi
+    fi
+    echo "Bundle interpreter: $PYTHON (Tk ${TK:-no tkinter})"
+fi
+
+mkdir -p "$BIN" "$DATA/icons"
 install -m 755 "$DIR/iptv-channels.py" "$BIN/iptv-channels.py"
 install -m 644 "$DIR"/icons/*.png "$DIR"/icons/*.ico "$DATA/icons/"
 echo "Installed: $BIN/iptv-channels.py"
@@ -45,23 +97,6 @@ fi
 # macOS: the Dock gets its icon from a bundle, never from Tk, so wrap the
 # script in a minimal .app. Iconutil ships with macOS, nothing to download.
 APP="$HOME/Applications/IPTV Channels.app"
-
-# Resolve the interpreter here, in a shell that can see the real PATH, and bake
-# it into the bundle: a Finder launch only sees /usr/bin:/bin:/usr/sbin:/sbin,
-# where python3 is Apple's build with Tk 8.5.
-PYTHON=${PYTHON:-$(command -v python3 || true)}
-if [ -z "$PYTHON" ]; then
-    echo "No python3 on PATH. Re-run as: PYTHON=/path/to/python3 $0" >&2
-    exit 1
-fi
-TK=$("$PYTHON" -c 'import tkinter; print(tkinter.Tcl().eval("info patchlevel"))' 2>/dev/null || true)
-case "$TK" in
-    8.[6-9]*|9.*|1[0-9].*) ;;
-    *)  echo "Note: $PYTHON reports Tcl/Tk ${TK:-unknown}, and the app needs 8.6 or newer." >&2
-        echo "      Re-run with: PYTHON=/path/to/python3 ./install.sh" >&2 ;;
-esac
-echo "Bundle interpreter: $PYTHON (Tk ${TK:-unknown})"
-
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 ICONSET="$TMP/icon.iconset"

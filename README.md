@@ -41,12 +41,31 @@ sudo apt install python3-tk mpv
 ./install.sh
 ```
 
-That copies `iptv-channels.py` to `~/.local/bin` and, on Linux, adds a menu
-entry (“IPTV Channels”). Start it from the menu or run `iptv-channels.py`.
+That copies `iptv-channels.py` to `~/.local/bin` and the icon assets to
+`~/.local/share/iptv-channels/icons`. On Linux it also registers the
+`iptv-channels` icon in the hicolor theme and adds a menu entry; on macOS it
+builds `~/Applications/IPTV Channels.app`, which is what gives the app its
+Dock icon and name.
 
-On Windows and macOS there is nothing to install: run
-`python iptv-channels.py` (or `pythonw iptv-channels.py` on Windows to skip
-the console window).
+On Windows there is nothing to install: run `pythonw iptv-channels.py` (no
+console window). The `.ico` is picked up from `icons/` for the taskbar.
+
+## Icon
+
+`icons/` holds the app icon in every size the three platforms ask for
+(`icon.png` at 1024 plus 512/256/128/64/32/16, and a multi-size `icon.ico`).
+It is drawn in code, so it is reproducible and has no licence attached:
+
+```sh
+pip install pillow          # build-time only, the app does not import it
+python make-icons.py                  # outline (default)
+python make-icons.py --style solid
+python make-icons.py --style disc
+```
+
+Each size is drawn at that size rather than downscaled from one master, and
+below 32 px the outline and solid glyphs reduce to a bare play triangle
+because the TV frame turns into noise at that scale.
 
 ## Usage
 

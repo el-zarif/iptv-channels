@@ -3,6 +3,6 @@ Type=Application
 Name=IPTV Channels
 Comment=Browse IPTV playlists and play the selected channel in mpv
 Exec=@EXEC@
-Icon=video-display
+Icon=iptv-channels
 Terminal=false
 Categories=AudioVideo;Video;

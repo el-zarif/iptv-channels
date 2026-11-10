@@ -54,6 +54,18 @@ DEFAULT_SOURCES = [
 
 
 # ------------------------------------------------------------------ platform
+def icon_file(name):
+    """Icon assets live next to the script (repo checkout) or in the data
+    directory install.sh uses; either is fine, neither is required."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for path in (os.path.join(here, "icons", name), os.path.join(here, name),
+                 os.path.expanduser("~/.local/share/iptv-channels/icons/"
+                                    + name)):
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def direct_opener():
     return build_opener(ProxyHandler({}))
 
@@ -406,12 +418,33 @@ class Browser(tk.Tk):
         self.status_text = ""
         self.jobs = queue.Queue()
         self._sort = (None, False)
+        self._icon = None
+        self.set_window_icon()
         self._build()
         self.after(60, self._drain)
         self.refresh_sources()
         self.load_current()
 
     # ---- layout ---------------------------------------------------------
+    def set_window_icon(self):
+        """Window and taskbar icon. Tk 8.6 reads PNG directly; the .ico file is
+        what Windows Explorer and the taskbar pick up. On macOS the Dock icon
+        comes from the .app bundle install.sh builds, not from here."""
+        png = icon_file("icon-256.png") or icon_file("icon.png")
+        if png:
+            try:
+                self._icon = tk.PhotoImage(file=png)     # must stay referenced
+                self.iconphoto(True, self._icon)
+            except tk.TclError:
+                self._icon = None
+        if IS_WIN:
+            ico = icon_file("icon.ico")
+            if ico:
+                try:
+                    self.iconbitmap(default=ico)
+                except tk.TclError:
+                    pass
+
     def _build(self):
         style = ttk.Style(self)
         if IS_MAC:

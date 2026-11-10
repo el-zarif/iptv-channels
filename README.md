@@ -1,8 +1,12 @@
 # IPTV Channels
 
-A small GTK3 channel browser that **only lists playlists** — it does no
-decoding itself. Selecting a channel hands the stream to **mpv**, which gives
-hardware decoding, proper seeking and E-AC3/HEVC support that browsers lack.
+A small channel browser that **only lists playlists** — it does no decoding
+itself. Selecting a channel hands the stream to **mpv**, which gives hardware
+decoding, proper seeking and E-AC3/HEVC support that browsers lack.
+
+Runs on **Linux, macOS and Windows** from a bare Python 3 install: the window
+is Tkinter, which ships with Python, so there is no GTK, PyGObject or build
+step. mpv is the only external program.
 
 ## Features
 
@@ -18,15 +22,17 @@ hardware decoding, proper seeking and E-AC3/HEVC support that browsers lack.
 
 ## Requirements
 
-- Python 3 with GTK3 (`python3-gi`, `gir1.2-gtk-3.0`)
+- Python 3 with Tkinter (included in the python.org and most distro builds)
 - `mpv`
-- `pulseaudio-utils` (`pactl`) — used to make sure the default audio sink is a
-  real output before playback
+
+Linux also needs `python3-tk` if the distro splits it out. `pactl`
+(`pulseaudio-utils`) is optional — it is only used when `audio_sink` is
+configured.
 
 On Debian/Ubuntu:
 
 ```sh
-sudo apt install python3-gi gir1.2-gtk-3.0 mpv pulseaudio-utils
+sudo apt install python3-tk mpv
 ```
 
 ## Install
@@ -35,26 +41,40 @@ sudo apt install python3-gi gir1.2-gtk-3.0 mpv pulseaudio-utils
 ./install.sh
 ```
 
-That copies `iptv-channels.py` to `~/.local/bin` and adds a menu entry
-(“IPTV Channels”). Start it from the menu or run `iptv-channels.py`.
+That copies `iptv-channels.py` to `~/.local/bin` and, on Linux, adds a menu
+entry (“IPTV Channels”). Start it from the menu or run `iptv-channels.py`.
+
+On Windows and macOS there is nothing to install: run
+`python iptv-channels.py` (or `pythonw iptv-channels.py` on Windows to skip
+the console window).
 
 ## Usage
 
-1. Press **Add...** → *Xtream Codes* (server, username, password) or
-   *M3U / M3U8 URL* (a URL or a local file)
+1. Press **Add Xtream...** (server, username, password) or **Add M3U...**
+   (a URL or a local file)
 2. Pick the playlist in the **Playlist** dropdown
 3. Choose a category, search if needed
 4. Double-click a channel (or **Play in mpv**)
 
-**Edit...** changes an existing entry in place, **Remove** deletes it,
-**Reload** refreshes the current playlist.
+**Remove** deletes the selected playlist, **Reload** refreshes it.
+
+## Optional settings
+
+`~/.config/iptv-browser/sources.json` accepts a few keys next to `sources`:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `proxy` | `direct` | `env` honours `HTTP(S)_PROXY`; `direct` ignores it. Providers are usually local or on an edge host, where a shell proxy breaks them |
+| `audio_sink` | unset | Linux only: passed to `pactl set-default-sink` before playback |
+| `libva_driver` | unset | Linux only: sets `LIBVA_DRIVER_NAME` for mpv |
 
 ## Notes
 
 - Playlists are cached in `~/.cache/iptv-browser/`.
-- Credentials are stored locally in `~/.config/iptv-browser/sources.json`.
-- If a provider requires a `Referer` or blocks non-browser user agents, add it
-  to the playlist URL or use the provider's M3U export.
+- Credentials are stored locally in `~/.config/iptv-browser/sources.json`
+  (mode 600).
+- Channels are handed to mpv as `.../live/<user>/<pass>/<id>.ts`; some
+  providers only serve `.m3u8`, which mpv also plays.
 - Some channels are genuinely dead (the swarm/edge serves nothing); the player
   simply reports the failure. Try another channel.
 

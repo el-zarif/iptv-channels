@@ -126,6 +126,17 @@ the output is larger than the source — so it is silent on a 2160p feed and
 does its work on a 1080p one. An mpv version that cannot run a shader simply
 ignores it.
 
+The bundled shader differs from upstream in one constant: RCAS sharpening is
+at its maximum. The scale runs the other way, so `0.0` is the strongest
+setting and every step above it halves the sharpening. What that buys is edge
+contrast, not detail — EASU's upscaling measures about the same as
+`ewa_lanczossharp` against a true 4K reference, so the visible change is the
+sharpening. On a soft 1080p feed the maximum raises edge energy by roughly a
+third for a small loss of fidelity and a little more noise in flat areas;
+turning the shader's RCAS denoise off doubles both, which means sharpening
+compression artifacts rather than picture. Set the sharpening constant back to
+`0.2` for upstream's gentler default.
+
 The status bar names the upscaler the renderer actually ran (`· fsr` or
 `· ewa_lanczossharp`) and says nothing when the picture is drawn at its own
 size or shrunk, so whether a channel is being upscaled is read off the line

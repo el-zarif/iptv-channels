@@ -15,6 +15,11 @@ Optional keys in the same file:
   "proxy": "direct" | "env"   - default "direct"; "env" honours HTTP(S)_PROXY
   "audio_sink": "<pactl sink>" - Linux only, ignored where pactl is absent
   "libva_driver": "i965"       - Linux only, sets LIBVA_DRIVER_NAME for mpv
+  "hwdec": "auto-safe"         - mpv --hwdec mode; "no" forces software
+                                 decoding
+  "theme": "auto"              - "auto" follows the desktop where Tk can tell
+                                 (macOS aqua, Windows registry, GNOME
+                                 gsettings); "dark" and "light" force it
 
 Xtream providers can list tens of thousands of channels, so those are loaded
 per category on demand; plain M3U sources are loaded whole. Each source keeps
@@ -26,9 +31,12 @@ import os
 import queue
 import re
 import shutil
+import socket
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 import tkinter as tk
 import urllib.parse
 import urllib.request
@@ -350,11 +358,156 @@ def read_m3u_source(src):
 
 
 # ----------------------------------------------------------------- playback
-def play(url, cfg):
+def hwdec_mode(cfg):
+    """Hardware decode where the platform has it: "auto-safe" lets mpv pick
+    VideoToolbox, VAAPI or D3D11VA and fall back to software when the driver
+    cannot do it. mpv's own default is "no", which is why a 4K channel used to
+    run a whole CPU core at 120%."""
+    return (cfg or {}).get("hwdec") or "auto-safe"
+
+
+def ipc_path(seq):
+    """Where mpv should listen for JSON commands. POSIX gets a unix socket in
+    the temp directory, Windows a named pipe; the pid keeps two running copies
+    of the app apart."""
+    name = "iptv-channels-%d-%d" % (os.getpid(), seq)
+    if IS_WIN:
+        return "\\\\.\\pipe\\" + name
+    path = os.path.join(tempfile.gettempdir(), name + ".sock")
+    if len(os.fsencode(path)) > 100:      # sun_path is 104 bytes on macOS
+        path = os.path.join("/tmp", name + ".sock")
+    return path
+
+
+class IpcStream:
+    """A line-oriented handle on mpv's JSON IPC: a unix socket on POSIX, a
+    named pipe on Windows."""
+
+    def __init__(self, path, timeout=10.0):
+        self.sock = None
+        self.request_id = 0
+        if IS_WIN:
+            # Windows has no AF_UNIX; Python can still open a pipe by name.
+            self.file = open(path, "r+b", buffering=0)
+        else:
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.settimeout(timeout)
+            try:
+                self.sock.connect(path)
+            except OSError:
+                self.sock.close()
+                raise
+            self.file = self.sock.makefile("rwb")
+
+    def command(self, *args):
+        self.request_id += 1
+        mine = self.request_id
+        payload = json.dumps({"command": list(args),
+                              "request_id": mine}).encode("utf-8") + b"\n"
+        self.file.write(payload)
+        self.file.flush()
+        while True:
+            line = self.file.readline()
+            if not line:
+                raise OSError("mpv closed the IPC socket")
+            reply = json.loads(line.decode("utf-8", "replace"))
+            # mpv pushes events (file-loaded, video-reconfig, ...) to every
+            # client, so the next line is not necessarily our reply.
+            if reply.get("request_id") == mine:
+                return reply
+
+    def close(self):
+        try:
+            self.file.close()
+        except OSError:
+            pass
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+
+
+def format_stream_info(width, height, hwdec, dropped, fps):
+    """One line for the status bar: what is actually being decoded, instead of
+    what the channel name claims."""
+    if not width or not height:
+        return None
+    line = "%dx%d" % (width, height)
+    if fps:
+        line += " %sfps" % ("%.2f" % fps).rstrip("0").rstrip(".")
+    line += " · %s · %d dropped" % ("hw" if hwdec and hwdec != "no" else "sw",
+                                    dropped or 0)
+    return line
+
+
+class StreamWatcher:
+    """Polls mpv for resolution, decoder and dropped frames, and hands one
+    summary line to the window. Optional by design: if the socket never
+    appears, or mpv says something unexpected, the thread ends quietly and
+    playback is untouched."""
+
+    POLL = 2.0
+    PROPS = ("video-params/w", "video-params/h", "hwdec-current",
+             "frame-drop-count", "container-fps")
+
+    def __init__(self, path, post, show):
+        self.path = path
+        self.post = post
+        self.show = show
+        self.stopped = threading.Event()
+
+    def start(self):
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def stop(self):
+        self.stopped.set()
+        if not IS_WIN:
+            try:
+                os.unlink(self.path)     # a killed mpv leaves the socket
+            except OSError:
+                pass
+
+    def _run(self):
+        stream = None
+        try:
+            stream = self._connect()
+            while stream is not None and not self.stopped.is_set():
+                values = []
+                for prop in self.PROPS:
+                    values.append(stream.command("get_property",
+                                                 prop).get("data"))
+                text = format_stream_info(*values)
+                if text and not self.stopped.is_set():
+                    self.post(self.show, text)
+                self.stopped.wait(self.POLL)
+        except Exception:
+            pass             # mpv exited, or the socket is not mpv's
+        finally:
+            if stream is not None:
+                stream.close()
+            if not self.stopped.is_set():
+                self.post(self.show, "")   # mpv is gone: drop the readout
+
+    def _connect(self):
+        deadline = time.time() + 10.0
+        while not self.stopped.is_set() and time.time() < deadline:
+            try:
+                return IpcStream(self.path)
+            except OSError:
+                self.stopped.wait(0.25)
+        return None
+
+
+def play(url, cfg, ipc=""):
     """One stream at a time: replace whatever we started last time."""
     prepare_audio(cfg)
     cmd = [mpv_binary(), "--no-terminal", "--force-window=yes", "--ontop",
-           "--ytdl=no", "--network-timeout=15", "--loop-file=inf", url]
+           "--ytdl=no", "--network-timeout=15", "--loop-file=inf",
+           "--hwdec=" + hwdec_mode(cfg)]
+    if ipc:
+        cmd.append("--input-ipc-server=" + ipc)
+    cmd.append(url)
     kwargs = {}
     if IS_WIN:
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -373,6 +526,116 @@ def stop_player(player):
         player.terminate()
     except OSError:
         pass
+
+
+# --------------------------------------------------------------------- theme
+def appearance(cfg):
+    """The "theme" key, normalised: "auto", "dark" or "light"."""
+    choice = str((cfg or {}).get("theme") or "auto").lower()
+    return choice if choice in ("dark", "light") else "auto"
+
+
+def _gsettings(key):
+    exe = shutil.which("gsettings")
+    if not exe:
+        return ""
+    try:
+        out = subprocess.run([exe, "get", "org.gnome.desktop.interface", key],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                             timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.decode("utf-8", "replace").strip().strip("'")
+
+
+def system_wants_dark():
+    """Tk has no appearance API, so "auto" is answered by hand: the Windows
+    registry and GNOME's gsettings both publish a preference. Anything unknown
+    counts as light, which is what Tk falls back to everywhere."""
+    if IS_WIN:
+        try:
+            import winreg
+            with winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    r"Software\Microsoft\Windows\CurrentVersion"
+                    r"\Themes\Personalize") as key:
+                return winreg.QueryValueEx(key, "AppsUseLightTheme")[0] == 0
+        except OSError:
+            return False
+    if IS_LINUX:
+        if "dark" in os.environ.get("GTK_THEME", "").lower():
+            return True
+        return (_gsettings("color-scheme") == "prefer-dark"
+                or "dark" in _gsettings("gtk-theme").lower())
+    return False
+
+
+def paint_dark(root, style):
+    """clam is drawn by Tk rather than by the desktop, so these colours are
+    what every platform shows. ttk themes ignore global colour settings by
+    design, hence one configure per widget class."""
+    bg, alt, fg = "#1e2023", "#2a2d31", "#e6e6e6"
+    field, edge, sel, accent = "#151618", "#3a3d42", "#3a4150", "#4a90d9"
+    root.configure(background=bg)
+    for name in ("TFrame", "TLabelframe", "TLabelframe.Label", "TLabel"):
+        style.configure(name, background=bg, foreground=fg)
+    style.configure("TButton", background=alt, foreground=fg,
+                    bordercolor=edge, lightcolor=alt, darkcolor=alt,
+                    focuscolor=accent, relief="flat")
+    style.map("TButton",
+              background=[("pressed", "#3a3f45"), ("active", "#33373c")],
+              foreground=[("disabled", "#6b6f75")])
+    style.configure("TEntry", fieldbackground=field, foreground=fg,
+                    insertcolor=fg, bordercolor=edge, lightcolor=edge,
+                    darkcolor=edge)
+    style.map("TEntry", fieldbackground=[("disabled", bg)])
+    style.configure("TCombobox", fieldbackground=field, background=alt,
+                    foreground=fg, arrowcolor=fg, bordercolor=edge,
+                    lightcolor=edge, darkcolor=edge)
+    style.map("TCombobox",
+              fieldbackground=[("readonly", field)],
+              foreground=[("readonly", fg)],
+              selectbackground=[("readonly", field)],
+              selectforeground=[("readonly", fg)])
+    style.configure("Treeview", background=bg, fieldbackground=bg,
+                    foreground=fg, bordercolor=alt, lightcolor=bg,
+                    darkcolor=bg)
+    style.map("Treeview", background=[("selected", sel)],
+              foreground=[("selected", "#ffffff")])
+    style.configure("Treeview.Heading", background=alt, foreground=fg,
+                    bordercolor=edge, relief="flat")
+    style.map("Treeview.Heading", background=[("active", "#33373c")])
+    # clam defines the oriented names, which win over the base class.
+    for name in ("TScrollbar", "Vertical.TScrollbar", "Horizontal.TScrollbar"):
+        style.configure(name, background=alt, troughcolor=bg, bordercolor=bg,
+                        lightcolor=alt, darkcolor=alt, arrowcolor=fg,
+                        relief="flat")
+        style.map(name, background=[("active", "#3a3f45")])
+    # The combobox popdown is a plain Tk listbox, not a ttk widget.
+    for pattern in ("*TCombobox*Listbox", "*Listbox"):
+        root.option_add(pattern + ".background", bg)
+        root.option_add(pattern + ".foreground", fg)
+        root.option_add(pattern + ".selectBackground", accent)
+        root.option_add(pattern + ".selectForeground", "#ffffff")
+
+
+def apply_theme(root, cfg):
+    """macOS is the one platform where Tk follows the desktop on its own: the
+    aqua theme resolves system colours, so switching to clam there is exactly
+    what turned dark mode off. Windows' vista theme has no dark variant and a
+    Linux Tk does not read the GTK theme, so those get clam plus a palette."""
+    style = ttk.Style(root)
+    mode = appearance(cfg)
+    if IS_MAC and mode == "auto":
+        style.theme_use("aqua")
+        style.configure("Hint.TLabel", foreground="#777")
+        return
+    style.theme_use("clam")
+    if mode == "dark" or (mode == "auto" and system_wants_dark()):
+        paint_dark(root, style)
+        style.configure("Hint.TLabel", foreground="#9aa0a6")
+    else:
+        style.configure("Hint.TLabel", foreground="#777")
 
 
 # ----------------------------------------------------------------------- UI
@@ -395,7 +658,7 @@ class FormDialog(tk.Toplevel):
                               show="*" if secret else "")
             entry.grid(row=row * 2 + 1, column=0, sticky="we")
             if hint:
-                ttk.Label(body, text=hint, foreground="#777").grid(
+                ttk.Label(body, text=hint, style="Hint.TLabel").grid(
                     row=row * 2 + 2, column=0, sticky="w")
             self.entries[key] = entry
         buttons = ttk.Frame(body)
@@ -429,6 +692,8 @@ class Browser(tk.Tk):
         self.busy = False
         self.suppress = False
         self.player = None
+        self.watcher = None
+        self.play_seq = 0
         self.status_text = ""
         self.jobs = queue.Queue()
         self._sort = (None, False)
@@ -482,9 +747,7 @@ class Browser(tk.Tk):
                     pass
 
     def _build(self):
-        style = ttk.Style(self)
-        if IS_MAC:
-            style.theme_use("clam")
+        apply_theme(self, self.cfg)
         outer = ttk.Frame(self, padding=8)
         outer.pack(fill="both", expand=True)
 
@@ -543,6 +806,10 @@ class Browser(tk.Tk):
         bottom.pack(fill="x", pady=(6, 0))
         ttk.Button(bottom, text="Play in mpv",
                    command=self.start_playback).pack(side="left")
+        # Packed before the status label, which expands and would starve it.
+        self.stream_var = tk.StringVar()
+        ttk.Label(bottom, textvariable=self.stream_var,
+                  anchor="e").pack(side="right")
         self.status = ttk.Label(bottom, text="Loading playlist...",
                                 anchor="w")
         self.status.pack(side="left", fill="x", expand=True, padx=8)
@@ -810,15 +1077,35 @@ class Browser(tk.Tk):
             return
         grp, name, _health, url = row
         self.cfg = load_config()
+        self.stop_watcher()
+        self.play_seq += 1
+        ipc = ipc_path(self.play_seq)
+        if not IS_WIN:
+            try:
+                os.unlink(ipc)       # left behind by an mpv that was killed
+            except OSError:
+                pass
         try:
             stop_player(self.player)
-            self.player = play(url, self.cfg)
+            self.player = play(url, self.cfg, ipc)
         except OSError as exc:
             self.set_status("Could not start mpv: %s" % exc)
             return
+        self.watcher = StreamWatcher(ipc, self.post, self.show_stream_info)
+        self.watcher.start()
         self.set_status("Playing: %s  (%s)" % (name, grp))
 
+    def show_stream_info(self, text):
+        self.stream_var.set(text)
+
+    def stop_watcher(self):
+        watcher, self.watcher = self.watcher, None
+        if watcher is not None:
+            watcher.stop()
+        self.stream_var.set("")
+
     def shutdown(self):
+        self.stop_watcher()
         stop_player(self.player)
         self.destroy()
 

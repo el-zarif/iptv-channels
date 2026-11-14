@@ -17,6 +17,8 @@ step. mpv is the only external program.
 - Search box, category dropdown, sortable columns
 - Health column showing the `[A:xx% y.yM]` tag when a playlist provides it
 - **Play in mpv** / double-click to watch; one player at a time
+- The status bar reports what mpv is actually decoding — `3840x2160 59.94fps ·
+  hw · 0 dropped` — so a name like "8K UHD" is not the only evidence
 - Caches each playlist so the window opens instantly and survives an outage
 - Remembers your sources in `~/.config/iptv-browser/sources.json`
 
@@ -96,6 +98,8 @@ because the TV frame turns into noise at that scale.
 | `proxy` | `direct` | `env` honours `HTTP(S)_PROXY`; `direct` ignores it. Providers are usually local or on an edge host, where a shell proxy breaks them |
 | `audio_sink` | unset | Linux only: passed to `pactl set-default-sink` before playback |
 | `libva_driver` | unset | Linux only: sets `LIBVA_DRIVER_NAME` for mpv |
+| `hwdec` | `auto-safe` | mpv `--hwdec` mode. `auto-safe` uses VideoToolbox / VAAPI / D3D11VA and falls back to software when the driver cannot do it; `no` forces software decoding |
+| `theme` | `auto` | `auto` follows the desktop: macOS through the `aqua` theme, Windows through the registry, Linux through GNOME's `gsettings` (and `GTK_THEME`). `dark` and `light` force one look — on macOS that means leaving `aqua` for a hand-painted palette, which is darker than it is native |
 
 ## Notes
 
@@ -104,6 +108,11 @@ because the TV frame turns into noise at that scale.
   (mode 600).
 - Channels are handed to mpv as `.../live/<user>/<pass>/<id>.ts`; some
   providers only serve `.m3u8`, which mpv also plays.
+- The status bar readout comes from mpv's JSON IPC socket, which is created per
+  playback in the temp directory. If it never appears, playback carries on and
+  the readout simply stays blank.
+- Channel names are marketing: providers label 1080p feeds "4K" and "8K UHD".
+  The readout is the part that cannot lie.
 - Some channels are genuinely dead (the swarm/edge serves nothing); the player
   simply reports the failure. Try another channel.
 

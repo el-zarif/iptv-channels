@@ -625,6 +625,10 @@ class StreamWatcher:
     playback is untouched."""
 
     POLL = 2.0
+    # The first samples land while the renderer is still warming up, and those
+    # frames are gone for good; counting from the sample where playback has
+    # settled keeps the number about stalls instead of about startup.
+    SETTLE = 3
     # "vo-passes" carries per-pass timings and descriptions: a few kB, so it is
     # sampled on a resize and every ten seconds otherwise, which catches a
     # renderer change that did not come with one.
@@ -639,6 +643,7 @@ class StreamWatcher:
         self.stopped = threading.Event()
         self.scaler = ""
         self.window = (0, 0)
+        self.settled = None
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
@@ -675,8 +680,17 @@ class StreamWatcher:
                         stream.command("get_property",
                                        "vo-passes").get("data"),
                         values[0], values[1], out_w, out_h)
+                if self.settled is None and tick >= self.SETTLE and values[0]:
+                    self.settled = values[3] or 0
+                dropped = values[3]
+                if self.settled is not None:
+                    if dropped is not None:
+                        dropped = max(0, dropped - self.settled)
+                else:
+                    dropped = 0         # still warming up: nothing to report yet
                 tick += 1
-                text = format_stream_info(*(values + [self.scaler]))
+                text = format_stream_info(values[0], values[1], values[2],
+                                          dropped, values[4], self.scaler)
                 if text and not self.stopped.is_set():
                     self.post(self.show, text)
                 self.stopped.wait(self.POLL)

@@ -153,13 +153,15 @@ its maximum. The scale runs the other way, so `0.0` is the strongest setting
 and every step above it halves the sharpening; upstream ships `0.2`, which is
 a gentler starting point if the maximum is too much on a clean source.
 
-The status bar names the upscaler the renderer actually ran (`· fsr` or
-`· ewa_lanczossharp`) and says nothing when the picture is drawn at its own
-size or shrunk, so whether a channel is being upscaled is read off the line
-instead of assumed. It comes from mpv's per-pass report, which describes what
-happened rather than what was configured, and it refreshes when the window
-changes size, so going fullscreen shows the new answer within a couple of
-seconds.
+The status bar names the upscaler the renderer actually ran (`· anime4k`,
+`· fsrcnnx`, `· fsr` or `· ewa_lanczossharp`) and says nothing when the
+picture is drawn at its own size or shrunk, so whether a channel is being
+upscaled is read off the line instead of assumed. It comes from mpv's
+per-pass report, which describes what happened rather than what was
+configured, and it refreshes when the window changes size, so going
+fullscreen shows the new answer within a couple of seconds. The dropped-frame
+count starts once playback has settled, so the frames the renderer loses
+while warming up are not reported as a stall.
 
 ```json
 { "mpv_args": ["--scale=ewa_lanczossharp", "--deband=yes", "--vf=deblock=filter=strong"] }

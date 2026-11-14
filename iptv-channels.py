@@ -739,7 +739,9 @@ class Browser(tk.Tk):
         style.configure("Treeview.Heading", font=("TkDefaultFont", size, "bold"))
         self.option_add("*TCombobox*Listbox.font", ("TkDefaultFont", size))
         try:
-            self.tree.column("channel", width=int(size * 26))
+            self.tree.column("group", width=int(size * 20))
+            self.tree.column("channel", width=int(size * 14))
+            self.tree.column("health", width=int(size * 7))
         except Exception:
             pass
 

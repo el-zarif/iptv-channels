@@ -103,7 +103,8 @@ because the TV frame turns into noise at that scale.
 | `libva_driver` | unset | Linux only: sets `LIBVA_DRIVER_NAME` for mpv |
 | `hwdec` | `auto-safe` | mpv `--hwdec` mode. `auto-safe` uses VideoToolbox / VAAPI / D3D11VA and falls back to software when the driver cannot do it; `no` forces software decoding |
 | `theme` | `auto` | `auto` follows the desktop: macOS through the `aqua` theme, Windows through the registry, Linux through GNOME's `gsettings` (and `GTK_THEME`). `dark` and `light` force one look — on macOS that means leaving `aqua` for a hand-painted palette, which is darker than it is native |
-| `mpv_args` | `["--scale=ewa_lanczossharp", "--deband=yes"]`, plus FSR when the bundled shader is found | Extra mpv options, one per list item, handed over verbatim. An empty list turns the defaults off |
+| `mpv_args` | `["--scale=ewa_lanczossharp", "--deband=yes"]` plus a light `--vf=hqdn3d` denoise when the installed mpv has that filter | Extra mpv options, one per list item, handed over verbatim. An empty list turns the defaults off |
+| `fsr` | `false` | `true` appends the bundled FSR shader to the mpv options. It sharpens, which helps a clean source and makes a heavily compressed one look more blocky; see below |
 
 ### Upscaling and sharpness
 
@@ -116,42 +117,52 @@ channel that really is 1080p gets resampled to your display, and
 only sharpening or a different tone mapping curve changes how it looks, and
 neither recovers detail that was not there.
 
-The app ships AMD's FSR 1.0.2 (`shaders/FSR.glsl`, MIT) and adds it to the
-default mpv options whenever the file is found: first in
-`~/.config/iptv-browser/shaders/`, then next to the script, then in the data
-directory `install.sh` fills. A `"mpv_args"` list in the config replaces those
-defaults verbatim, shader included, so a channel wanting its own scaler
-options is not stuck with FSR. FSR has its own trigger — it engages only when
-the output is larger than the source — so it is silent on a 2160p feed and
-does its work on a 1080p one. An mpv version that cannot run a shader simply
-ignores it.
+What makes an HD channel look pixelated on a 4K screen is the bitrate, not
+the scaler. At IPTV bitrates the encoder leaves a grid of block edges, and
+magnifying the picture magnifies them; sharpening afterwards raises their
+contrast further, so a sharper setting can look worse than a plain one. The
+default options therefore include a light denoise before the upscale, added
+when the installed mpv has the `hqdn3d` filter — the app probes `--vf=help`
+once and skips it where that fails, because mpv treats a `--vf` name it does
+not know as a fatal option error. On a 1.2 Mbit/s 1080p test feed it measured
+better than every scaler change tried, pulling the block edges down and
+costing 0.07% SSIM on a clean source. For a feed that needs more than that,
+`--vf=deblock=filter=strong` smooths the block boundaries outright, at a small
+cost in real edge detail.
 
-The bundled shader differs from upstream in one constant: RCAS sharpening is
-at its maximum. The scale runs the other way, so `0.0` is the strongest
-setting and every step above it halves the sharpening. What that buys is edge
-contrast, not detail — EASU's upscaling measures about the same as
-`ewa_lanczossharp` against a true 4K reference, so the visible change is the
-sharpening. On a soft 1080p feed the maximum raises edge energy by roughly a
-third for a small loss of fidelity and a little more noise in flat areas;
-turning the shader's RCAS denoise off doubles both, which means sharpening
-compression artifacts rather than picture. Set the sharpening constant back to
-`0.2` for upstream's gentler default.
+The app ships AMD's FSR 1.0.2 (`shaders/FSR.glsl`, MIT) but leaves it off
+unless the config sets `"fsr": true`. Its EASU upscale measures about the same
+as `ewa_lanczossharp` against a true 4K reference, so what it adds is RCAS
+edge contrast — and on the same blocky feed that raised the visible block
+edges by a tenth rather than lowering them. On a clean source it is a matter
+of taste, which is what the option is for. When enabled it is appended rather
+than substituted, so a shader list in `mpv.conf` survives, and it is looked up
+in `~/.config/iptv-browser/shaders/`, then next to the script, then in the
+data directory `install.sh` fills. An mpv version that cannot run a shader
+simply ignores the option.
+
+The bundled copy differs from upstream in one constant: RCAS sharpening is at
+its maximum. The scale runs the other way, so `0.0` is the strongest setting
+and every step above it halves the sharpening; upstream ships `0.2`, which is
+a gentler starting point if the maximum is too much on a clean source.
 
 The status bar names the upscaler the renderer actually ran (`· fsr` or
 `· ewa_lanczossharp`) and says nothing when the picture is drawn at its own
 size or shrunk, so whether a channel is being upscaled is read off the line
-instead of assumed. It comes from mpv's per-pass timings, which report what
+instead of assumed. It comes from mpv's per-pass report, which describes what
 happened rather than what was configured, and it refreshes when the window
 changes size, so going fullscreen shows the new answer within a couple of
 seconds.
 
 ```json
 { "mpv_args": ["--scale=ewa_lanczossharp", "--deband=yes"] }
+{ "fsr": true }
 ```
 
 Useful additions: `--sharpen=0.5` for perceived acutance on soft feeds,
 `--tone-mapping=bt.2446a` (or `spline`) when an HDR channel looks flat on an
-SDR screen, and `[]` to compare against mpv's defaults.
+SDR screen, `--vf=deblock=filter=strong` for a badly compressed one, and `[]`
+to compare against mpv's defaults.
 
 ## Notes
 

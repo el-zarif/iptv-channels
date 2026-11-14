@@ -49,6 +49,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 CONF_DIR = os.path.expanduser("~/.config/iptv-browser")
 SOURCES_FILE = os.path.join(CONF_DIR, "sources.json")
 CACHE_DIR = os.path.expanduser("~/.cache/iptv-browser")
+DATA_DIR = os.path.expanduser("~/.local/share/iptv-channels")
 
 IS_WIN = sys.platform.startswith("win")
 IS_MAC = sys.platform == "darwin"
@@ -67,6 +68,11 @@ MIN_TK = (8, 6)
 # 50.0 fps sustained once the renderer spins up; only the first few frames
 # drop.
 DEFAULT_MPV_ARGS = ("--scale=ewa_lanczossharp", "--deband=yes")
+# Shipped with the app and loaded when mpv finds it: AMD's FSR 1.0.2 upscaler,
+# which only engages when the window is bigger than the video (its own WHEN
+# condition), so a 2160p feed is left alone. A local copy in the config
+# directory wins, so it can be swapped without touching the install.
+SHADER_NAME = "FSR.glsl"
 DEFAULT_SOURCES = [
     {"name": "Ace (local proxy)", "type": "m3u",
      "url": "http://127.0.0.1:8080/playlist-direct.m3u8"},
@@ -391,16 +397,47 @@ def hwdec_mode(cfg):
     return (cfg or {}).get("hwdec") or "auto-safe"
 
 
+def shader_dirs():
+    """Where a shipped shader can live. The config directory comes first so a
+    hand-installed copy is never shadowed; then next to the script, which is
+    how a checkout runs on Windows where there is no install step; then the
+    data directory install.sh fills."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return (os.path.join(CONF_DIR, "shaders"),
+            os.path.join(here, "shaders"),
+            os.path.join(DATA_DIR, "shaders"))
+
+
+def find_shader(name=SHADER_NAME):
+    for directory in shader_dirs():
+        path = os.path.join(directory, name)
+        if os.path.isfile(path):
+            return path
+    return ""
+
+
+def default_mpv_args():
+    """DEFAULT_MPV_ARGS plus the shader, when one is found. mpv is not told
+    where shaders live: a missing file only prints to stdout and stderr that
+    play() discards, and playback carries on, so the argument is added only
+    for a file that exists."""
+    args = list(DEFAULT_MPV_ARGS)
+    shader = find_shader()
+    if shader:
+        args.append("--glsl-shaders=" + shader)
+    return args
+
+
 def mpv_args(cfg):
     """"mpv_args" from the config: extra options handed to mpv verbatim, so a
     better scaler or a tone mapping curve is a config change and not a patch.
-    A missing key means DEFAULT_MPV_ARGS, an empty list means none — the
+    A missing key means the built-in defaults, an empty list means none — the
     distinction lets someone who dislikes the defaults switch them off."""
     raw = (cfg or {}).get("mpv_args")
     if raw is None:
-        return list(DEFAULT_MPV_ARGS)
+        return default_mpv_args()
     if not isinstance(raw, (list, tuple)):
-        return list(DEFAULT_MPV_ARGS)
+        return default_mpv_args()
     return [str(a) for a in raw if str(a).strip()]
 
 

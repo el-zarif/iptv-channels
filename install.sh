@@ -65,6 +65,20 @@ fi
 mkdir -p "$BIN" "$DATA/icons"
 install -m 755 "$DIR/iptv-channels.py" "$BIN/iptv-channels.py"
 install -m 644 "$DIR"/icons/*.png "$DIR"/icons/*.ico "$DATA/icons/"
+# The upscaler shader ships with the app; the config directory is checked
+# first, so a local copy can still override it.
+if [ -d "$DIR/shaders" ]; then
+    mkdir -p "$DATA/shaders"
+    n=0
+    for shader in "$DIR"/shaders/*.glsl; do
+        # An empty directory leaves the glob unexpanded, and install would
+        # fail on the literal name.
+        [ -f "$shader" ] || continue
+        install -m 644 "$shader" "$DATA/shaders/"
+        n=$((n + 1))
+    done
+    [ "$n" -eq 0 ] || echo "Installed: $DATA/shaders"
+fi
 echo "Installed: $BIN/iptv-channels.py"
 echo "Installed: $DATA/icons"
 

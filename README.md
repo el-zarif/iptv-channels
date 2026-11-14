@@ -53,14 +53,17 @@ Tk older than 8.6, because that combination opens an empty window; pass
 `--force` to install it anyway, or point it at a better interpreter with
 `PYTHON=/path/to/python3 ./install.sh`.
 
-That copies `iptv-channels.py` to `~/.local/bin` and the icon assets to
-`~/.local/share/iptv-channels/icons`. On Linux it also registers the
+That copies `iptv-channels.py` to `~/.local/bin`, the icon assets to
+`~/.local/share/iptv-channels/icons` and the bundled shader to
+`~/.local/share/iptv-channels/shaders`. On Linux it also registers the
 `iptv-channels` icon in the hicolor theme and adds a menu entry; on macOS it
 builds `~/Applications/IPTV Channels.app`, which is what gives the app its
 Dock icon and name.
 
 On Windows there is nothing to install: run `pythonw iptv-channels.py` (no
-console window). The `.ico` is picked up from `icons/` for the taskbar.
+console window). The `.ico` is picked up from `icons/` for the taskbar, and
+the shader from `shaders/` beside the script — keep the folder with it, or
+the upscaler is silently skipped.
 
 ## Icon
 
@@ -100,7 +103,7 @@ because the TV frame turns into noise at that scale.
 | `libva_driver` | unset | Linux only: sets `LIBVA_DRIVER_NAME` for mpv |
 | `hwdec` | `auto-safe` | mpv `--hwdec` mode. `auto-safe` uses VideoToolbox / VAAPI / D3D11VA and falls back to software when the driver cannot do it; `no` forces software decoding |
 | `theme` | `auto` | `auto` follows the desktop: macOS through the `aqua` theme, Windows through the registry, Linux through GNOME's `gsettings` (and `GTK_THEME`). `dark` and `light` force one look — on macOS that means leaving `aqua` for a hand-painted palette, which is darker than it is native |
-| `mpv_args` | `["--scale=ewa_lanczossharp", "--deband=yes"]` | Extra mpv options, one per list item, handed over verbatim. An empty list turns the defaults off |
+| `mpv_args` | `["--scale=ewa_lanczossharp", "--deband=yes"]`, plus FSR when the bundled shader is found | Extra mpv options, one per list item, handed over verbatim. An empty list turns the defaults off |
 
 ### Upscaling and sharpness
 
@@ -112,6 +115,16 @@ channel that really is 1080p gets resampled to your display, and
 2160p display — the upscaler never runs, so a sharper scaler cannot help it;
 only sharpening or a different tone mapping curve changes how it looks, and
 neither recovers detail that was not there.
+
+The app ships AMD's FSR 1.0.2 (`shaders/FSR.glsl`, MIT) and adds it to the
+default mpv options whenever the file is found: first in
+`~/.config/iptv-browser/shaders/`, then next to the script, then in the data
+directory `install.sh` fills. A `"mpv_args"` list in the config replaces those
+defaults verbatim, shader included, so a channel wanting its own scaler
+options is not stuck with FSR. FSR has its own trigger — it engages only when
+the output is larger than the source — so it is silent on a 2160p feed and
+does its work on a 1080p one. An mpv version that cannot run a shader simply
+ignores it.
 
 ```json
 { "mpv_args": ["--scale=ewa_lanczossharp", "--deband=yes"] }

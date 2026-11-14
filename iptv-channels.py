@@ -38,6 +38,7 @@ import tempfile
 import threading
 import time
 import tkinter as tk
+from tkinter import font as tkfont
 import urllib.parse
 import urllib.request
 from tkinter import filedialog, messagebox, ttk
@@ -181,6 +182,18 @@ def save_sources(sources):
         os.replace(tmp, SOURCES_FILE)
     except OSError as exc:
         sys.stderr.write("could not save sources: %s\n" % exc)
+
+
+def save_config(cfg):
+    try:
+        os.makedirs(CONF_DIR, exist_ok=True)
+        tmp = SOURCES_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, SOURCES_FILE)
+    except OSError as exc:
+        sys.stderr.write("could not save config: %s\n" % exc)
 
 
 def normalise(s):
@@ -682,10 +695,14 @@ class Browser(tk.Tk):
         if tk_too_old(self):
             self.fail_on_old_tk()
         self.title("IPTV Channels")
-        self.geometry("900x660")
-        self.minsize(680, 440)
+        self.geometry("1020x720")
+        self.minsize(760, 500)
         self.sources = load_sources()
         self.cfg = load_config()
+        try:
+            self.font_size = max(8, min(40, int(self.cfg.get("font_size", 14))))
+        except (TypeError, ValueError):
+            self.font_size = 14
         self.entries = []
         self.categories = []
         self.mode = "m3u"
@@ -700,9 +717,56 @@ class Browser(tk.Tk):
         self._icon = None
         self.set_window_icon()
         self._build()
+        self._apply_fonts()
+        self._bind_zoom()
         self.after(60, self._drain)
         self.refresh_sources()
         self.load_current()
+
+    # ---- fonts ----------------------------------------------------------
+    def _apply_fonts(self):
+        """Scale all widgets through Tk's named fonts, plus the Treeview row
+        height (which does not follow the font)."""
+        size = self.font_size
+        for name in ("TkDefaultFont", "TkTextFont", "TkHeadingFont",
+                     "TkMenuFont", "TkFixedFont", "TkSmallCaptionFont"):
+            try:
+                tkfont.nametofont(name).configure(size=size)
+            except tk.TclError:
+                pass
+        style = ttk.Style(self)
+        style.configure("Treeview", rowheight=int(size * 2.0))
+        style.configure("Treeview.Heading", font=("TkDefaultFont", size, "bold"))
+        self.option_add("*TCombobox*Listbox.font", ("TkDefaultFont", size))
+        try:
+            self.tree.column("channel", width=int(size * 26))
+        except Exception:
+            pass
+
+    def _set_font(self, size):
+        size = max(8, min(40, int(size)))
+        if size == self.font_size:
+            return
+        self.font_size = size
+        self._apply_fonts()
+        cfg = load_config()
+        cfg["font_size"] = size
+        save_config(cfg)
+        self.set_status("Text size: %d  (Ctrl +/- to change, Ctrl+0 to reset)"
+                        % size)
+
+    def _zoom(self, delta):
+        self._set_font(self.font_size + delta)
+
+    def _bind_zoom(self):
+        self.bind_all("<Control-plus>", lambda _e: self._zoom(1))
+        self.bind_all("<Control-equal>", lambda _e: self._zoom(1))
+        self.bind_all("<Control-minus>", lambda _e: self._zoom(-1))
+        self.bind_all("<Control-Key-0>", lambda _e: self._set_font(14))
+        self.bind_all("<Control-Button-4>", lambda _e: self._zoom(1))
+        self.bind_all("<Control-Button-5>", lambda _e: self._zoom(-1))
+        self.bind_all("<Control-MouseWheel>",
+                      lambda e: self._zoom(1 if getattr(e, "delta", 0) > 0 else -1))
 
     # ---- layout ---------------------------------------------------------
     def fail_on_old_tk(self):

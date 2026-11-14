@@ -119,3 +119,13 @@ because the TV frame turns into noise at that scale.
 ## License
 
 MIT
+
+### Text size
+
+The interface scales with **Ctrl + / Ctrl -** (or Ctrl + mouse wheel);
+**Ctrl+0** resets. The choice is saved as `font_size` in
+`~/.config/iptv-browser/sources.json`, so you can also set it directly:
+
+```json
+{ "font_size": 20, "sources": [ ... ] }
+```

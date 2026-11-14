@@ -59,6 +59,8 @@ IS_LINUX = sys.platform.startswith("linux")
 USER_AGENT = "Mozilla/5.0"
 GROUP_ORDER = {"Live Events": 0, "PPV": 1, "TV": 2}
 ALL_GROUPS = "All groups"
+SCOPE_ONE = "This playlist"
+SCOPE_ALL = "All playlists"
 MAX_ROWS = 3000
 MIN_TK = (8, 6)
 # What mpv gets on top of the flags play() always passes. ewa_lanczossharp
@@ -81,6 +83,20 @@ DEFAULT_MPV_ARGS = ("--scale=ewa_lanczossharp", "--deband=yes")
 # in this copy, which helps a clean source and hurts a compressed one. A local
 # copy in the config directory wins, so it can be swapped without touching the
 # install.
+# Shader chains, by the name the config asks for. "anime4k" is the default
+# pair: Restore removes the encoder's block edges, Upscale does the 2x with a
+# network instead of a kernel. Measured on a live 1080p channel that was
+# itself a provider upscale, the pair held the block grid neutral while
+# roughly tripling edge energy, at 25 fps with no dropped frames on an M4 Max.
+# Both files are MIT with their headers intact. "fsr" is the single AMD
+# upscaler, which sharpens rather than reconstructs; "none" leaves mpv's
+# scaler alone.
+SHADER_CHAINS = {
+    "anime4k": ("Anime4K_Restore_CNN_M.glsl",
+                "Anime4K_Upscale_CNN_x2_M.glsl"),
+    "fsr": ("FSR.glsl",),
+    "none": (),
+}
 SHADER_NAME = "FSR.glsl"
 DEFAULT_SOURCES = [
     {"name": "Ace (local proxy)", "type": "m3u",
@@ -258,13 +274,24 @@ def save_config(cfg):
         sys.stderr.write("could not save config: %s\n" % exc)
 
 
+def server_url(server):
+    """Xtream providers hand out "host:port" as often as a full URL, and
+    "host:8080" parses as a URL whose scheme is the host, so every request
+    fails. Give it a scheme and drop the trailing slash, which otherwise
+    turns into a doubled path."""
+    server = (server or "").strip().rstrip("/")
+    if server and "://" not in server:
+        server = "http://" + server
+    return server
+
+
 def normalise(s):
     if not isinstance(s, dict):
         return None
     if s.get("type") == "xtream":
         if s.get("server") and s.get("user") and s.get("pass"):
             return {"name": s.get("name") or "Xtream", "type": "xtream",
-                    "server": s["server"].rstrip("/"), "user": s["user"],
+                    "server": server_url(s["server"]), "user": s["user"],
                     "pass": s["pass"]}
         return None
     if s.get("url"):
@@ -472,20 +499,24 @@ def default_mpv_args(cfg=None):
     and stderr that play() discards, and playback carries on, so the argument
     is added only for a file that exists.
 
-    The shader is off by default because it sharpens what is already wrong
-    with a low-bitrate feed: RCAS raises the contrast of encoder block edges,
-    so a compressed channel looks more pixelated with it than without. On a
-    clean source it is a matter of taste, which is what the option is for."""
+    The shader chain is chosen by the "shaders" key and defaults to anime4k:
+    a learned upscaler reconstructs the edges a kernel smears, and the pair
+    measured better than anything else tried on the kind of channel this app
+    plays. "fsr" is the single AMD upscaler, "none" leaves mpv's scaler, and a
+    shader that is missing is skipped rather than passed to mpv."""
     args = list(DEFAULT_MPV_ARGS)
     if mpv_has_vf("deblock"):
         args.append("--vf=deblock=filter=strong")
-    if (cfg or {}).get("fsr") is not True:
-        return args
-    shader = find_shader()
-    if shader:
-        # append, not replace: --glsl-shaders= would drop any shader the user
-        # listed in mpv.conf, and the app is a guest in that file.
-        args.append("--glsl-shaders-append=" + shader)
+    mode = (cfg or {}).get("shaders")
+    if mode is None:
+        # "fsr": true in an older config still means what it says.
+        mode = "fsr" if (cfg or {}).get("fsr") is True else "anime4k"
+    for name in SHADER_CHAINS.get(mode, ()):
+        shader = find_shader(name)
+        if shader:
+            # append, not replace: --glsl-shaders= would drop any shader the
+            # user listed in mpv.conf, and the app is a guest in that file.
+            args.append("--glsl-shaders-append=" + shader)
     return args
 
 
@@ -854,14 +885,19 @@ def apply_theme(root, cfg):
 
 # ----------------------------------------------------------------------- UI
 class FormDialog(tk.Toplevel):
-    """Small modal form: fields = [(key, label, hint, secret)]."""
+    """Small modal form: fields = [(key, label, hint, secret)]. `initial`
+    pre-fills the entries so the same dialog adds and edits, and
+    `delete_label` puts a destructive button next to Cancel that only sets
+    `deleted` — the caller decides what deleting means."""
 
-    def __init__(self, parent, title, fields, ok_label="Add"):
+    def __init__(self, parent, title, fields, ok_label="Add", initial=None,
+                 delete_label=None):
         super().__init__(parent)
         self.title(title)
         self.resizable(False, False)
         self.transient(parent)
         self.result = None
+        self.deleted = False
         self.entries = {}
         body = ttk.Frame(self, padding=12)
         body.pack(fill="both", expand=True)
@@ -871,12 +907,18 @@ class FormDialog(tk.Toplevel):
             entry = ttk.Entry(body, width=46,
                               show="*" if secret else "")
             entry.grid(row=row * 2 + 1, column=0, sticky="we")
+            value = (initial or {}).get(key, "")
+            if value:
+                entry.insert(0, str(value))
             if hint:
                 ttk.Label(body, text=hint, style="Hint.TLabel").grid(
                     row=row * 2 + 2, column=0, sticky="w")
             self.entries[key] = entry
         buttons = ttk.Frame(body)
-        buttons.grid(row=len(fields) * 3, column=0, sticky="e", pady=(12, 0))
+        buttons.grid(row=len(fields) * 3, column=0, sticky="we", pady=(12, 0))
+        if delete_label:
+            ttk.Button(buttons, text=delete_label,
+                       command=self._delete).pack(side="left")
         ttk.Button(buttons, text="Cancel", command=self.destroy).pack(
             side="right", padx=(6, 0))
         ttk.Button(buttons, text=ok_label, command=self._ok).pack(side="right")
@@ -887,6 +929,36 @@ class FormDialog(tk.Toplevel):
 
     def _ok(self):
         self.result = {k: e.get().strip() for k, e in self.entries.items()}
+        self.destroy()
+
+    def _delete(self):
+        self.deleted = True
+        self.destroy()
+
+
+class ChoiceDialog(tk.Toplevel):
+    """Modal question with one button per choice; `result` is the chosen key
+    or None. For forks in the flow, where a form field would be a lie."""
+
+    def __init__(self, parent, title, choices):
+        super().__init__(parent)
+        self.title(title)
+        self.resizable(False, False)
+        self.transient(parent)
+        self.result = None
+        body = ttk.Frame(self, padding=14)
+        body.pack(fill="both", expand=True)
+        for key, label in choices:
+            ttk.Button(body, text=label, width=32,
+                       command=lambda k=key: self._pick(k)).pack(pady=3)
+        ttk.Button(body, text="Cancel", command=self.destroy).pack(
+            pady=(10, 0))
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.grab_set()
+        self.wait_window(self)
+
+    def _pick(self, key):
+        self.result = key
         self.destroy()
 
 
@@ -907,6 +979,7 @@ class Browser(tk.Tk):
         self.entries = []
         self.categories = []
         self.mode = "m3u"
+        self.all_mode = False
         self.busy = False
         self.suppress = False
         self.player = None
@@ -1035,14 +1108,12 @@ class Browser(tk.Tk):
         self.source = ttk.Combobox(bar, textvariable=self.source_var,
                                    state="readonly", width=34)
         self.source.pack(side="left", padx=(6, 6))
-        self.source.bind("<<ComboboxSelected>>",
-                         lambda _e: self.load_current())
-        ttk.Button(bar, text="Add M3U...", command=self.on_add_m3u).pack(
+        self.source.bind("<<ComboboxSelected>>", self.on_playlist_changed)
+        ttk.Button(bar, text="Add...", command=self.on_add_source).pack(
             side="left")
-        ttk.Button(bar, text="Add Xtream...", command=self.on_add_xtream).pack(
+        ttk.Button(bar, text="Edit...", command=self.on_edit_source).pack(
             side="left", padx=4)
-        ttk.Button(bar, text="Remove", command=self.on_remove).pack(side="left")
-        ttk.Button(bar, text="Reload", command=self.load_current).pack(
+        ttk.Button(bar, text="Reload", command=self.on_reload).pack(
             side="left", padx=4)
 
         filt = ttk.Frame(outer)
@@ -1051,6 +1122,15 @@ class Browser(tk.Tk):
         self.search_var.trace_add("write", lambda *_a: self.refresh_view())
         search = ttk.Entry(filt, textvariable=self.search_var)
         search.pack(side="left", fill="x", expand=True)
+        # Searching every playlist is a different fetch from searching the one
+        # on screen, so it is a scope rather than a second search box.
+        ttk.Label(filt, text="  In:").pack(side="left")
+        self.scope_var = tk.StringVar(value=SCOPE_ONE)
+        self.scope = ttk.Combobox(filt, textvariable=self.scope_var,
+                                  state="readonly", width=14,
+                                  values=[SCOPE_ONE, SCOPE_ALL])
+        self.scope.pack(side="left", padx=(6, 0))
+        self.scope.bind("<<ComboboxSelected>>", self.on_scope_changed)
         ttk.Label(filt, text="  Group:").pack(side="left")
         self.group_var = tk.StringVar(value=ALL_GROUPS)
         self.group = ttk.Combobox(filt, textvariable=self.group_var,
@@ -1119,6 +1199,81 @@ class Browser(tk.Tk):
         idx = self.current_index()
         return self.sources[idx] if idx is not None else None
 
+    def on_playlist_changed(self):
+        """Picking a playlist means looking at that playlist, so the scope
+        follows the choice instead of leaving a stale all-playlists result on
+        screen."""
+        if self.scope_var.get() == SCOPE_ALL:
+            self.scope_var.set(SCOPE_ONE)
+        self.load_current()
+
+    def on_reload(self):
+        """Reload what is on screen: the all-playlists fetch, or the one
+        playlist."""
+        if self.scope_var.get() == SCOPE_ALL:
+            self.load_all_sources()
+        else:
+            self.load_current()
+
+    def on_scope_changed(self, _event=None):
+        if self.scope_var.get() == SCOPE_ALL:
+            self.load_all_sources()
+        else:
+            self.group.configure(state="readonly")
+            self.load_current()
+
+    def load_all_sources(self):
+        """Search every playlist at once: one fetch per playlist, off the UI
+        thread, and a playlist that fails to load does not hide the others.
+        Categories stop mattering here, so the group box is disabled and the
+        playlist name takes its column."""
+        if self.busy:
+            return
+        self.busy = True
+        self.all_mode = True
+        self.group.configure(state="disabled")
+        self.entries = []
+        self.fill_store()
+        self.set_status("Loading all playlists...")
+        sources = [dict(s) for s in self.sources]
+
+        def work():
+            rows = []
+            for src in sources:
+                label = src["name"]
+                try:
+                    if src["type"] == "xtream":
+                        entries, _fresh = xtream_streams(src, None)
+                        for _g, name, health, url in entries:
+                            rows.append((label, name, health, url))
+                    else:
+                        text, _fresh = read_m3u_source(src)
+                        for group, name, health, url in parse_m3u(
+                                text, src.get("url", "")):
+                            rows.append(("%s · %s" % (label, group) if group
+                                         else label, name, health, url))
+                except Exception:
+                    continue
+            self.post(self.apply_all_sources, rows)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def apply_all_sources(self, rows):
+        self.busy = False
+        if not self.all_mode:
+            # The user left the scope while this was loading. If they are
+            # back on All playlists, the all-fetch is owed again; otherwise
+            # the single load they chose is still owed.
+            if self.scope_var.get() == SCOPE_ALL:
+                self.load_all_sources()
+                return
+            self.load_current()
+            return
+        self.entries = rows
+        self.fill_store()
+        self.set_status("%d channels from %d playlists" % (
+            len(rows), len(self.sources)))
+
     def refresh_sources(self, select=None):
         names = [s["name"] for s in self.sources]
         self.source.configure(values=names)
@@ -1130,7 +1285,18 @@ class Browser(tk.Tk):
 
     def load_current(self):
         idx = self.current_index()
-        if idx is None or self.busy:
+        if idx is None:
+            return
+        # Loading one playlist means looking at one playlist: a Reload,
+        # Edit, Delete or Add while the all-playlists scope is showing must
+        # not leave the scope box pointing at it.
+        if self.scope_var.get() == SCOPE_ALL:
+            self.scope_var.set(SCOPE_ONE)
+        # Leaving the all-playlists scope has to restore the group box even if
+        # a fetch is still running; apply_all_sources picks the load back up.
+        self.all_mode = False
+        self.group.configure(state="readonly")
+        if self.busy:
             return
         src = self.sources[idx]
         self.cfg = load_config()
@@ -1170,10 +1336,16 @@ class Browser(tk.Tk):
 
     def load_failed(self, name, exc):
         self.busy = False
+        if self.scope_var.get() == SCOPE_ALL:
+            self.load_all_sources()
+            return
         self.set_status("Could not load %s: %s" % (name, exc))
 
     def apply_m3u(self, entries, fresh, name):
         self.busy = False
+        if self.scope_var.get() == SCOPE_ALL:
+            self.load_all_sources()
+            return
         self.entries = entries
         groups = []
         for g, _n, _h, _u in entries:
@@ -1190,13 +1362,16 @@ class Browser(tk.Tk):
 
     def apply_categories(self, cats, fresh, name):
         self.busy = False
+        if self.scope_var.get() == SCOPE_ALL:
+            self.load_all_sources()
+            return
         self.categories = cats
         if not cats:
             self.set_status("%s: no categories (check the account)" % name)
             return
         self.suppress = True
         self.group.configure(values=[ALL_GROUPS] + [c[1] for c in cats])
-        self.group.current(1)          # first category: keeps it light
+        self.group.current(0)          # every category, not just the first
         self.suppress = False
         self.set_status("%s: %d categories - %s" % (
             name, len(cats), "live" if fresh else "cached"))
@@ -1234,6 +1409,9 @@ class Browser(tk.Tk):
 
     def apply_category(self, entries, fresh, cat_name):
         self.busy = False
+        if self.scope_var.get() == SCOPE_ALL:
+            self.load_all_sources()
+            return
         self.entries = [(cat_name, n, h, u) for _g, n, h, u in entries]
         self.fill_store()
         self.set_status("%s: %d channels - %s" % (
@@ -1246,7 +1424,9 @@ class Browser(tk.Tk):
 
     def visible_entries(self):
         query = self.search_var.get().strip().lower()
-        group = self.group_var.get() if self.mode == "m3u" else None
+        group = None
+        if self.mode == "m3u" and not self.all_mode:
+            group = self.group_var.get()
         rows = []
         for row in self.entries:
             if group and group != ALL_GROUPS and row[0] != group:
@@ -1292,6 +1472,18 @@ class Browser(tk.Tk):
             self.set_status("%s: %s" % (row[0], row[1]))
 
     # ---- dialogs --------------------------------------------------------
+    def on_add_source(self):
+        """One Add button: the two playlist types share a purpose but not a
+        form, so the choice comes before the fields."""
+        choice = ChoiceDialog(self, "Add playlist", [
+            ("m3u", "M3U playlist (URL or file)"),
+            ("xtream", "Xtream Codes (server account)"),
+        ]).result
+        if choice == "m3u":
+            self.on_add_m3u()
+        elif choice == "xtream":
+            self.on_add_xtream()
+
     def on_add_m3u(self):
         dlg = FormDialog(self, "Add M3U playlist", [
             ("name", "Name", "My IPTV", False),
@@ -1309,7 +1501,7 @@ class Browser(tk.Tk):
     def on_add_xtream(self):
         dlg = FormDialog(self, "Add Xtream Codes", [
             ("name", "Name", "My provider", False),
-            ("server", "Server address", "http://host:8080", False),
+            ("server", "Server address", "", False),
             ("user", "Username", "", False),
             ("pass", "Password", "", True),
         ])
@@ -1322,7 +1514,7 @@ class Browser(tk.Tk):
             return
         self.add_source({"name": vals.get("name") or "Xtream",
                          "type": "xtream",
-                         "server": vals["server"].rstrip("/"),
+                         "server": server_url(vals["server"]),
                          "user": vals["user"], "pass": vals["pass"]})
 
     def add_source(self, src):
@@ -1331,12 +1523,11 @@ class Browser(tk.Tk):
         self.refresh_sources(len(self.sources) - 1)
         self.load_current()
 
-    def on_remove(self):
-        if len(self.sources) <= 1:
+    def remove_source(self, idx):
+        """Delete by index. The guard stays: an empty list leaves the window
+        with nothing to load and no way back."""
+        if idx is None or idx >= len(self.sources) or len(self.sources) <= 1:
             self.set_status("Keep at least one playlist")
-            return
-        idx = self.current_index()
-        if idx is None:
             return
         src = self.sources.pop(idx)
         save_sources(self.sources)
@@ -1345,6 +1536,52 @@ class Browser(tk.Tk):
         self.fill_store()
         self.load_current()
         self.set_status("Removed %s" % src["name"])
+
+    def on_edit_source(self):
+        """One dialog for renaming, re-pointing and deleting: the playlist is
+        already selected in the bar, so Add/Edit/Delete stay in one place."""
+        idx = self.current_index()
+        if idx is None:
+            return
+        src = dict(self.sources[idx])
+        xtream = src["type"] == "xtream"
+        if xtream:
+            fields = [("name", "Name", "", False),
+                      ("server", "Server address", "", False),
+                      ("user", "Username", "", False),
+                      ("pass", "Password", "", True)]
+        else:
+            fields = [("name", "Name", "My IPTV", False),
+                      ("url", "M3U URL or file path",
+                       "http://host/get.php?... or /path/list.m3u", False)]
+        dlg = FormDialog(self, "Edit playlist", fields, ok_label="Save",
+                         initial=src, delete_label="Delete")
+        if dlg.deleted:
+            self.remove_source(idx)
+            return
+        if not dlg.result:
+            return
+        vals = dlg.result
+        if xtream:
+            if not (vals.get("server") and vals.get("user")
+                    and vals.get("pass")):
+                messagebox.showwarning(
+                    "Xtream Codes",
+                    "Server, username and password are required.")
+                return
+            src.update({"name": vals.get("name") or "Xtream",
+                        "server": server_url(vals["server"]),
+                        "user": vals["user"], "pass": vals["pass"]})
+        else:
+            if not vals.get("url"):
+                return
+            src.update({"name": vals.get("name")
+                        or vals["url"].rsplit("/", 1)[-1][:40],
+                        "url": vals["url"]})
+        self.sources[idx] = src
+        save_sources(self.sources)
+        self.refresh_sources(idx)
+        self.load_current()
 
     # ---- playback -------------------------------------------------------
     def start_playback(self):

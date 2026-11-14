@@ -84,13 +84,21 @@ because the TV frame turns into noise at that scale.
 
 ## Usage
 
-1. Press **Add Xtream...** (server, username, password) or **Add M3U...**
-   (a URL or a local file)
+1. Press **Add...** and pick **M3U playlist** (a URL or a local file) or
+   **Xtream Codes** (server, username, password). An Xtream server can be
+   given as `host:port` or `http://host:port`
 2. Pick the playlist in the **Playlist** dropdown
 3. Choose a category, search if needed
 4. Double-click a channel (or **Play in mpv**)
 
-**Remove** deletes the selected playlist, **Reload** refreshes it.
+**Edit...** opens the selected playlist with its current values, so renaming
+or re-pointing it is the same dialog; **Delete** in that dialog removes it
+(the last playlist cannot be deleted). **Reload** refreshes it.
+
+The **Group** box starts on every category rather than the first one, and
+**In:** next to the search field switches between searching the playlist on
+screen and searching every playlist at once — the second loads each playlist
+in turn and shows the playlist name in the Group column.
 
 ## Optional settings
 
@@ -103,8 +111,8 @@ because the TV frame turns into noise at that scale.
 | `libva_driver` | unset | Linux only: sets `LIBVA_DRIVER_NAME` for mpv |
 | `hwdec` | `auto-safe` | mpv `--hwdec` mode. `auto-safe` uses VideoToolbox / VAAPI / D3D11VA and falls back to software when the driver cannot do it; `no` forces software decoding |
 | `theme` | `auto` | `auto` follows the desktop: macOS through the `aqua` theme, Windows through the registry, Linux through GNOME's `gsettings` (and `GTK_THEME`). `dark` and `light` force one look — on macOS that means leaving `aqua` for a hand-painted palette, which is darker than it is native |
-| `mpv_args` | `["--scale=ewa_lanczossharp", "--deband=yes"]` plus a `--vf=deblock` when the installed mpv has that filter | Extra mpv options, one per list item, handed over verbatim. An empty list turns the defaults off |
-| `fsr` | `false` | `true` appends the bundled FSR shader to the mpv options. It sharpens, which helps a clean source and makes a heavily compressed one look more blocky; see below |
+| `mpv_args` | `["--scale=ewa_lanczossharp", "--deband=yes"]`, a `--vf=deblock` when the installed mpv has that filter, and the `shaders` chain | Extra mpv options, one per list item, handed over verbatim. An empty list turns the defaults off |
+| `shaders` | `anime4k` | Which bundled shader chain to append: `anime4k` (restore plus a learned 2x upscale), `fsr` (AMD's sharpener), or `none`. A shader that is missing is skipped; an explicit `mpv_args` list replaces the defaults entirely |
 
 ### Upscaling and sharpness
 
@@ -137,21 +145,25 @@ None of this recovers the missing detail. A channel that carries 650 lines
 will look like 650 lines however it is scaled, and the honest fixes are a
 higher-quality variant of the channel or sitting further from the panel.
 
-The app ships AMD's FSR 1.0.2 (`shaders/FSR.glsl`, MIT) but leaves it off
-unless the config sets `"fsr": true`. Its EASU upscale measures about the same
-as `ewa_lanczossharp` against a true 4K reference, so what it adds is RCAS
-edge contrast — and on the same blocky feed that raised the visible block
-edges by a tenth rather than lowering them. On a clean source it is a matter
-of taste, which is what the option is for. When enabled it is appended rather
-than substituted, so a shader list in `mpv.conf` survives, and it is looked up
-in `~/.config/iptv-browser/shaders/`, then next to the script, then in the
-data directory `install.sh` fills. An mpv version that cannot run a shader
-simply ignores the option.
+The default chain is Anime4K's Restore and Upscale networks
+(`shaders/Anime4K_*.glsl`, MIT): Restore removes what the encoder left
+behind, then the upscaler does the 2x with a network instead of a kernel.
+Measured on a live 1080p channel that was itself a provider upscale, the pair
+left the block grid neutral while roughly tripling edge energy, at 25 fps with
+no dropped frames. On a weaker GPU that is the first thing to cost frames, so
+`"shaders": "none"` turns it off and `"fsr"` selects the single AMD upscaler
+instead — the same EASU upscale as `ewa_lanczossharp` with RCAS edge contrast
+on top, which sharpens a clean source and makes a blocky one worse. Shaders
+are appended rather than substituted, so a list in `mpv.conf` survives, and
+they are looked up in `~/.config/iptv-browser/shaders/`, then next to the
+script, then in the data directory `install.sh` fills. A missing file is
+skipped and an mpv that cannot run shaders ignores the option.
 
-The bundled copy differs from upstream in one constant: RCAS sharpening is at
-its maximum. The scale runs the other way, so `0.0` is the strongest setting
-and every step above it halves the sharpening; upstream ships `0.2`, which is
-a gentler starting point if the maximum is too much on a clean source.
+The bundled FSR copy differs from upstream in one constant: RCAS sharpening is
+at its maximum. The scale runs the other way, so `0.0` is the strongest
+setting and every step above it halves the sharpening; upstream ships `0.2`,
+which is a gentler starting point if the maximum is too much on a clean
+source.
 
 The status bar names the upscaler the renderer actually ran (`· anime4k`,
 `· fsrcnnx`, `· fsr` or `· ewa_lanczossharp`) and says nothing when the

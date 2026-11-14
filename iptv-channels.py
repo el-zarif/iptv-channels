@@ -64,7 +64,8 @@ MIN_TK = (8, 6)
 # matters here: providers label upscaled 1080p feeds "4K" and a few thousand
 # channels are honestly 1080p. deband removes the stair-stepping that
 # low-bitrate H.265 leaves in gradients. Measured at 4K 50 fps on an M4 Max:
-# 50.0 fps, no dropped frames.
+# 50.0 fps sustained once the renderer spins up; only the first few frames
+# drop.
 DEFAULT_MPV_ARGS = ("--scale=ewa_lanczossharp", "--deband=yes")
 DEFAULT_SOURCES = [
     {"name": "Ace (local proxy)", "type": "m3u",
@@ -1200,7 +1201,7 @@ class Browser(tk.Tk):
     def _check_player(self, seq):
         """mpv exits at once on an option it does not know or a URL the
         provider refuses, and the status bar used to go on claiming playback.
-        One check a second after the start says so instead, since mpv's own
+        One check 1200 ms after the start says so instead, since mpv's own
         stderr goes to /dev/null and its window never appears."""
         if seq != self.play_seq or self.player is None:
             return

@@ -104,12 +104,14 @@ because the TV frame turns into noise at that scale.
 
 ### Upscaling and sharpness
 
-mpv only scales when the video is smaller than the window. A channel that
-really is 1080p gets resampled to your display, and `ewa_lanczossharp`
-reconstructs those edges better than mpv's default `lanczos`. A channel the
-provider already upscaled to 2160p is drawn 1:1 — no scaler runs, so a sharper
-scaler cannot help it; only sharpening or a different tone mapping curve
-changes how it looks, and neither recovers detail that was not there.
+mpv runs a luma upscaler only when the video is smaller than the window
+(bigger video is downscaled instead, and chroma is always resampled). A
+channel that really is 1080p gets resampled to your display, and
+`ewa_lanczossharp` reconstructs those edges better than mpv's default
+`lanczos`. A channel the provider already upscaled to 2160p is drawn 1:1 on a
+2160p display — the upscaler never runs, so a sharper scaler cannot help it;
+only sharpening or a different tone mapping curve changes how it looks, and
+neither recovers detail that was not there.
 
 ```json
 { "mpv_args": ["--scale=ewa_lanczossharp", "--deband=yes"] }

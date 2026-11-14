@@ -103,7 +103,7 @@ because the TV frame turns into noise at that scale.
 | `libva_driver` | unset | Linux only: sets `LIBVA_DRIVER_NAME` for mpv |
 | `hwdec` | `auto-safe` | mpv `--hwdec` mode. `auto-safe` uses VideoToolbox / VAAPI / D3D11VA and falls back to software when the driver cannot do it; `no` forces software decoding |
 | `theme` | `auto` | `auto` follows the desktop: macOS through the `aqua` theme, Windows through the registry, Linux through GNOME's `gsettings` (and `GTK_THEME`). `dark` and `light` force one look — on macOS that means leaving `aqua` for a hand-painted palette, which is darker than it is native |
-| `mpv_args` | `["--scale=ewa_lanczossharp", "--deband=yes"]` plus a light `--vf=hqdn3d` denoise when the installed mpv has that filter | Extra mpv options, one per list item, handed over verbatim. An empty list turns the defaults off |
+| `mpv_args` | `["--scale=ewa_lanczossharp", "--deband=yes"]` plus a `--vf=deblock` when the installed mpv has that filter | Extra mpv options, one per list item, handed over verbatim. An empty list turns the defaults off |
 | `fsr` | `false` | `true` appends the bundled FSR shader to the mpv options. It sharpens, which helps a clean source and makes a heavily compressed one look more blocky; see below |
 
 ### Upscaling and sharpness
@@ -117,18 +117,25 @@ channel that really is 1080p gets resampled to your display, and
 only sharpening or a different tone mapping curve changes how it looks, and
 neither recovers detail that was not there.
 
-What makes an HD channel look pixelated on a 4K screen is the bitrate, not
-the scaler. At IPTV bitrates the encoder leaves a grid of block edges, and
-magnifying the picture magnifies them; sharpening afterwards raises their
-contrast further, so a sharper setting can look worse than a plain one. The
-default options therefore include a light denoise before the upscale, added
-when the installed mpv has the `hqdn3d` filter — the app probes `--vf=help`
-once and skips it where that fails, because mpv treats a `--vf` name it does
-not know as a fatal option error. On a 1.2 Mbit/s 1080p test feed it measured
-better than every scaler change tried, pulling the block edges down and
-costing 0.07% SSIM on a clean source. For a feed that needs more than that,
-`--vf=deblock=filter=strong` smooths the block boundaries outright, at a small
-cost in real edge detail.
+What makes an HD channel look pixelated on a 4K screen is the stream, not the
+scaler. Measured on a live 1080p channel, the detail stopped at roughly 650
+lines — the provider had already upscaled a smaller source — and the encoder's
+block grid was stronger than in a 1.2 Mbit/s test encode, at 1.27 versus 1.09
+on the 16-pixel grid. Magnifying that 2.1x magnifies the grid, and sharpening
+afterwards raises its contrast further, so a sharper setting can look worse
+than a plain one.
+
+The default options therefore include a deblock before the upscale, added when
+the installed mpv has the `deblock` filter — the app probes `--vf=help` once
+and skips it where that fails, because mpv treats a `--vf` name it does not
+know as a fatal option error. On that channel it cut the block-edge energy
+from 1.13 to 0.85 with edge detail unchanged. A light denoise was measured on
+the same frames first and changed nothing, which is why it is not the default.
+For a noisy feed, `--vf=hqdn3d=2:2:6:6` in `mpv_args` is the knob.
+
+None of this recovers the missing detail. A channel that carries 650 lines
+will look like 650 lines however it is scaled, and the honest fixes are a
+higher-quality variant of the channel or sitting further from the panel.
 
 The app ships AMD's FSR 1.0.2 (`shaders/FSR.glsl`, MIT) but leaves it off
 unless the config sets `"fsr": true`. Its EASU upscale measures about the same
@@ -155,13 +162,13 @@ changes size, so going fullscreen shows the new answer within a couple of
 seconds.
 
 ```json
-{ "mpv_args": ["--scale=ewa_lanczossharp", "--deband=yes"] }
+{ "mpv_args": ["--scale=ewa_lanczossharp", "--deband=yes", "--vf=deblock=filter=strong"] }
 { "fsr": true }
 ```
 
 Useful additions: `--sharpen=0.5` for perceived acutance on soft feeds,
 `--tone-mapping=bt.2446a` (or `spline`) when an HDR channel looks flat on an
-SDR screen, `--vf=deblock=filter=strong` for a badly compressed one, and `[]`
+SDR screen, `--vf=hqdn3d=2:2:6:6` for a noisy one, and `[]`
 to compare against mpv's defaults.
 
 ## Notes

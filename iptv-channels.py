@@ -69,11 +69,12 @@ MIN_TK = (8, 6)
 # 50.0 fps sustained once the renderer spins up; only the first few frames
 # drop.
 DEFAULT_MPV_ARGS = ("--scale=ewa_lanczossharp", "--deband=yes")
-# A light denoise is added to the above when the mpv binary has the filter
-# (see default_mpv_args): IPTV bitrates leave 8x8 block edges that a scaler
-# turns into visible squares, and cleaning them before the upscale measured
-# better than any scaler change on a 1.2 Mbit/s 1080p feed (SSIM 0.9647
-# against 0.9645 plain, block edges down, 0.07% SSIM on a clean source).
+# A deblock is added to the above when the mpv binary has the filter (see
+# default_mpv_args): IPTV channels carry a grid of encoder block edges, and a
+# scaler turns it into visible squares. Measured on a live 1080p channel that
+# is itself a provider upscale, the filter cut block-edge energy at the 16
+# pixel grid from 1.134 to 0.850 with edge detail unchanged, while a light
+# denoise changed nothing at all on the same frames.
 # Shipped with the app and used only when the config sets "fsr": true. AMD's
 # FSR 1.0.2, which engages only when the window is bigger than the video (its
 # own WHEN condition), so a 2160p feed is left alone. RCAS is at its maximum
@@ -460,12 +461,12 @@ def find_shader(name=SHADER_NAME):
 
 
 def default_mpv_args(cfg=None):
-    """DEFAULT_MPV_ARGS plus a light denoise when the mpv binary has the
-    filter, and the bundled shader when the config asks for it. hqdn3d is
-    checked first because an mpv that lacks it treats --vf=hqdn3d as a fatal
-    option error and exits before playing anything, so the argument is added
-    only when the binary itself lists it. It costs one cold mpv start, cached
-    for the rest of the process.
+    """DEFAULT_MPV_ARGS plus a deblock when the mpv binary has the filter, and
+    the bundled shader when the config asks for it. The filter is probed first
+    because an mpv that lacks it treats --vf=deblock as a fatal option error
+    and exits before playing anything, so the argument is added only when the
+    binary itself lists it. It costs one cold mpv start, cached for the rest of
+    the process.
 
     mpv is not told where shaders live: a missing file only prints to stdout
     and stderr that play() discards, and playback carries on, so the argument
@@ -473,11 +474,11 @@ def default_mpv_args(cfg=None):
 
     The shader is off by default because it sharpens what is already wrong
     with a low-bitrate feed: RCAS raises the contrast of encoder block edges,
-    so a 1.2 Mbit/s channel looks more pixelated with it than without. On a
+    so a compressed channel looks more pixelated with it than without. On a
     clean source it is a matter of taste, which is what the option is for."""
     args = list(DEFAULT_MPV_ARGS)
-    if mpv_has_vf("hqdn3d"):
-        args.append("--vf=hqdn3d=1:1:4:4")
+    if mpv_has_vf("deblock"):
+        args.append("--vf=deblock=filter=strong")
     if (cfg or {}).get("fsr") is not True:
         return args
     shader = find_shader()

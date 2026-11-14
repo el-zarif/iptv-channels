@@ -424,7 +424,9 @@ def default_mpv_args():
     args = list(DEFAULT_MPV_ARGS)
     shader = find_shader()
     if shader:
-        args.append("--glsl-shaders=" + shader)
+        # append, not replace: --glsl-shaders= would drop any shader the user
+        # listed in mpv.conf, and the app is a guest in that file.
+        args.append("--glsl-shaders-append=" + shader)
     return args
 
 
@@ -503,9 +505,10 @@ class IpcStream:
                 pass
 
 
-def format_stream_info(width, height, hwdec, dropped, fps):
+def format_stream_info(width, height, hwdec, dropped, fps, scaler=""):
     """One line for the status bar: what is actually being decoded, instead of
-    what the channel name claims."""
+    what the channel name claims. "scaler" names the pass the renderer ran
+    (see scaler_from_passes), so an upscale is visible rather than assumed."""
     if not width or not height:
         return None
     line = "%dx%d" % (width, height)
@@ -513,7 +516,38 @@ def format_stream_info(width, height, hwdec, dropped, fps):
         line += " %sfps" % ("%.2f" % fps).rstrip("0").rstrip(".")
     line += " · %s · %d dropped" % ("hw" if hwdec and hwdec != "no" else "sw",
                                     dropped or 0)
+    if scaler:
+        line += " · " + scaler
     return line
+
+
+def scaler_from_passes(passes, width, height, out_width, out_height):
+    """Which upscaler the renderer actually ran, read from "vo-passes" instead
+    of guessed: mpv describes every pass, FSR as its own Super Resolution
+    entry, the kernel as "polar upscaling (<name>)". The kernel pass is listed
+    even when nothing is scaled, so the scale factor has to decide first
+    whether there was anything to upscale."""
+    if not (width and height and out_width and out_height):
+        return ""
+    # out_* is the OSD/window size, not the picture rect: a 2.39:1 film in a
+    # 16:9 window fills the width and leaves bars, and the smaller of the two
+    # axis ratios is the fit scale mpv itself used.
+    if min(float(out_width) / width, float(out_height) / height) <= 1.0:
+        return ""                    # native size or shrunk: no upscaler ran
+    if not isinstance(passes, dict):
+        return ""
+    descriptions = []
+    for group in passes.values():
+        for item in (group if isinstance(group, list) else []):
+            if isinstance(item, dict) and item.get("desc"):
+                descriptions.append(str(item["desc"]))
+    for desc in descriptions:
+        if "Super Resolution" in desc:
+            return "fsr"
+    for desc in descriptions:
+        if "upscaling (" in desc:
+            return desc.split("upscaling (", 1)[1].split(")", 1)[0].strip()
+    return ""
 
 
 class StreamWatcher:
@@ -523,6 +557,10 @@ class StreamWatcher:
     playback is untouched."""
 
     POLL = 2.0
+    # "vo-passes" carries per-pass timings and descriptions: a few kB, so it is
+    # sampled on a resize and every ten seconds otherwise, which catches a
+    # renderer change that did not come with one.
+    PASS_EVERY = 5
     PROPS = ("video-params/w", "video-params/h", "hwdec-current",
              "frame-drop-count", "container-fps")
 
@@ -531,6 +569,8 @@ class StreamWatcher:
         self.post = post
         self.show = show
         self.stopped = threading.Event()
+        self.scaler = ""
+        self.window = (0, 0)
 
     def start(self):
         threading.Thread(target=self._run, daemon=True).start()
@@ -545,6 +585,7 @@ class StreamWatcher:
 
     def _run(self):
         stream = None
+        tick = 0
         try:
             stream = self._connect()
             while stream is not None and not self.stopped.is_set():
@@ -552,7 +593,22 @@ class StreamWatcher:
                 for prop in self.PROPS:
                     values.append(stream.command("get_property",
                                                  prop).get("data"))
-                text = format_stream_info(*values)
+                out_w = stream.command("get_property",
+                                       "osd-dimensions/w").get("data")
+                out_h = stream.command("get_property",
+                                       "osd-dimensions/h").get("data")
+                # Refetch when the window changed size too: going fullscreen is
+                # how a channel starts being upscaled, and waiting for the next
+                # periodic sample would leave the old answer on the bar while
+                # the picture is already bigger.
+                if (out_w, out_h) != self.window or tick % self.PASS_EVERY == 0:
+                    self.window = (out_w, out_h)
+                    self.scaler = scaler_from_passes(
+                        stream.command("get_property",
+                                       "vo-passes").get("data"),
+                        values[0], values[1], out_w, out_h)
+                tick += 1
+                text = format_stream_info(*(values + [self.scaler]))
                 if text and not self.stopped.is_set():
                     self.post(self.show, text)
                 self.stopped.wait(self.POLL)

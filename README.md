@@ -126,6 +126,14 @@ the output is larger than the source — so it is silent on a 2160p feed and
 does its work on a 1080p one. An mpv version that cannot run a shader simply
 ignores it.
 
+The status bar names the upscaler the renderer actually ran (`· fsr` or
+`· ewa_lanczossharp`) and says nothing when the picture is drawn at its own
+size or shrunk, so whether a channel is being upscaled is read off the line
+instead of assumed. It comes from mpv's per-pass timings, which report what
+happened rather than what was configured, and it refreshes when the window
+changes size, so going fullscreen shows the new answer within a couple of
+seconds.
+
 ```json
 { "mpv_args": ["--scale=ewa_lanczossharp", "--deband=yes"] }
 ```

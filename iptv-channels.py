@@ -1172,6 +1172,12 @@ class Browser(tk.Tk):
                                 anchor="w")
         self.status.pack(side="left", fill="x", expand=True, padx=8)
 
+    def report_callback_exception(self, exc, val, tb):
+        """Tk sends callback errors to stderr, which a .app does not show, so
+        a broken button looks like a button that does nothing. Put the error
+        where the user is already looking."""
+        self.set_status("Error: %s" % val)
+
     def set_status(self, text):
         self.status_text = text
         self.status.configure(text=text)
@@ -1200,7 +1206,7 @@ class Browser(tk.Tk):
         idx = self.current_index()
         return self.sources[idx] if idx is not None else None
 
-    def on_playlist_changed(self):
+    def on_playlist_changed(self, _event=None):
         """Picking a playlist means looking at that playlist, so the scope
         follows the choice instead of leaving a stale all-playlists result on
         screen."""

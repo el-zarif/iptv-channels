@@ -603,6 +603,15 @@ def scaler_from_passes(passes, width, height, out_width, out_height):
     for desc in descriptions:
         if "Super Resolution" in desc:
             return "fsr"
+    # A learned upscaler names its passes after itself, not after a kernel, so
+    # it would otherwise be invisible here and the bar would credit the chroma
+    # scaler for work the network did.
+    for desc in descriptions:
+        if "Anime4K" in desc:
+            return "anime4k"
+    for desc in descriptions:
+        if "feature map" in desc or "sub-pixel convolution" in desc:
+            return "fsrcnnx"
     for desc in descriptions:
         if "upscaling (" in desc:
             return desc.split("upscaling (", 1)[1].split(")", 1)[0].strip()

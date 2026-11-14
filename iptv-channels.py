@@ -980,6 +980,7 @@ class Browser(tk.Tk):
         self.categories = []
         self.mode = "m3u"
         self.all_mode = False
+        self.pending = False
         self.busy = False
         self.suppress = False
         self.player = None
@@ -1260,6 +1261,8 @@ class Browser(tk.Tk):
 
     def apply_all_sources(self, rows):
         self.busy = False
+        if self._resume_pending():
+            return
         if not self.all_mode:
             # The user left the scope while this was loading. If they are
             # back on All playlists, the all-fetch is owed again; otherwise
@@ -1297,7 +1300,13 @@ class Browser(tk.Tk):
         self.all_mode = False
         self.group.configure(state="readonly")
         if self.busy:
+            # Remember the request instead of dropping it: dropping leaves the
+            # table showing the previous playlist while the box already says
+            # this one, and the fetch that is running would repaint over it.
+            self.pending = True
+            self.set_status("Loading %s..." % self.sources[idx]["name"])
             return
+        self.pending = False
         src = self.sources[idx]
         self.cfg = load_config()
         self.busy = True
@@ -1334,8 +1343,20 @@ class Browser(tk.Tk):
 
             threading.Thread(target=work, daemon=True).start()
 
+    def _resume_pending(self):
+        """A load just finished. If the user asked for another playlist while
+        it ran, that request is still owed, so start it now rather than paint
+        the result they are no longer looking at."""
+        if not self.pending:
+            return False
+        self.pending = False
+        self.load_current()
+        return True
+
     def load_failed(self, name, exc):
         self.busy = False
+        if self._resume_pending():
+            return
         if self.scope_var.get() == SCOPE_ALL:
             self.load_all_sources()
             return
@@ -1343,6 +1364,8 @@ class Browser(tk.Tk):
 
     def apply_m3u(self, entries, fresh, name):
         self.busy = False
+        if self._resume_pending():
+            return
         if self.scope_var.get() == SCOPE_ALL:
             self.load_all_sources()
             return
@@ -1362,6 +1385,8 @@ class Browser(tk.Tk):
 
     def apply_categories(self, cats, fresh, name):
         self.busy = False
+        if self._resume_pending():
+            return
         if self.scope_var.get() == SCOPE_ALL:
             self.load_all_sources()
             return
@@ -1409,6 +1434,8 @@ class Browser(tk.Tk):
 
     def apply_category(self, entries, fresh, cat_name):
         self.busy = False
+        if self._resume_pending():
+            return
         if self.scope_var.get() == SCOPE_ALL:
             self.load_all_sources()
             return

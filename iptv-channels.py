@@ -897,6 +897,9 @@ class FormDialog(tk.Toplevel):
     def __init__(self, parent, title, fields, ok_label="Add", initial=None,
                  delete_label=None):
         super().__init__(parent)
+        sys.stderr.write("%s dialog: %s\n" % (time.strftime("%H:%M:%S"),
+                                               title))
+        sys.stderr.flush()
         self.title(title)
         self.resizable(False, False)
         self.transient(parent)
@@ -906,17 +909,17 @@ class FormDialog(tk.Toplevel):
         body = ttk.Frame(self, padding=12)
         body.pack(fill="both", expand=True)
         for row, (key, label, hint, secret) in enumerate(fields):
-            ttk.Label(body, text=label).grid(row=row * 2, column=0,
+            ttk.Label(body, text=label).grid(row=row * 3, column=0,
                                              sticky="w", pady=(6, 0))
             entry = ttk.Entry(body, width=46,
                               show="*" if secret else "")
-            entry.grid(row=row * 2 + 1, column=0, sticky="we")
+            entry.grid(row=row * 3 + 1, column=0, sticky="we")
             value = (initial or {}).get(key, "")
             if value:
                 entry.insert(0, str(value))
             if hint:
                 ttk.Label(body, text=hint, style="Hint.TLabel").grid(
-                    row=row * 2 + 2, column=0, sticky="w")
+                    row=row * 3 + 2, column=0, sticky="w")
             self.entries[key] = entry
         buttons = ttk.Frame(body)
         buttons.grid(row=len(fields) * 3, column=0, sticky="we", pady=(12, 0))
@@ -946,6 +949,9 @@ class ChoiceDialog(tk.Toplevel):
 
     def __init__(self, parent, title, choices):
         super().__init__(parent)
+        sys.stderr.write("%s dialog: %s\n" % (time.strftime("%H:%M:%S"),
+                                               title))
+        sys.stderr.flush()
         self.title(title)
         self.resizable(False, False)
         self.transient(parent)
@@ -985,6 +991,7 @@ class Browser(tk.Tk):
         self.mode = "m3u"
         self.all_mode = False
         self.pending = False
+        self._modal = False
         self.busy = False
         self.suppress = False
         self.player = None
@@ -1180,7 +1187,10 @@ class Browser(tk.Tk):
         """Tk sends callback errors to stderr, which a .app does not show, so
         a broken button looks like a button that does nothing. Put the error
         where the user is already looking."""
-        self.set_status("Error: %s" % val)
+        try:
+            self.set_status("Error: %s" % val)
+        except Exception:
+            sys.stderr.write("Error: %s\n" % val)
 
     def set_status(self, text):
         self.status_text = text
@@ -1353,14 +1363,32 @@ class Browser(tk.Tk):
 
             threading.Thread(target=work, daemon=True).start()
 
+    def open_modal(self, make):
+        """Only one dialog at a time. A second click while a form is already
+        waiting would put another window behind it, and closing the first then
+        looks like the window keeps coming back."""
+        if self._modal:
+            return None
+        self._modal = True
+        try:
+            return make()
+        finally:
+            self._modal = False
+
     def _resume_pending(self):
         """A load just finished. If the user asked for another playlist while
         it ran, that request is still owed, so start it now rather than paint
-        the result they are no longer looking at."""
+        the result they are no longer looking at. The user may also have
+        switched to the all-playlists scope while busy; loading one playlist
+        then would silently undo that scope choice, so honour the scope box
+        instead."""
         if not self.pending:
             return False
         self.pending = False
-        self.load_current()
+        if self.scope_var.get() == SCOPE_ALL:
+            self.load_all_sources()
+        else:
+            self.load_current()
         return True
 
     def load_failed(self, name, exc):
@@ -1512,22 +1540,22 @@ class Browser(tk.Tk):
     def on_add_source(self):
         """One Add button: the two playlist types share a purpose but not a
         form, so the choice comes before the fields."""
-        choice = ChoiceDialog(self, "Add playlist", [
+        choice = self.open_modal(lambda: ChoiceDialog(self, "Add playlist", [
             ("m3u", "M3U playlist (URL or file)"),
             ("xtream", "Xtream Codes (server account)"),
-        ]).result
+        ]).result)
         if choice == "m3u":
             self.on_add_m3u()
         elif choice == "xtream":
             self.on_add_xtream()
 
     def on_add_m3u(self):
-        dlg = FormDialog(self, "Add M3U playlist", [
+        dlg = self.open_modal(lambda: FormDialog(self, "Add M3U playlist", [
             ("name", "Name", "My IPTV", False),
             ("url", "M3U URL or file path",
              "http://host/get.php?... or /path/list.m3u", False),
-        ])
-        if not dlg.result:
+        ]))
+        if not dlg or not dlg.result:
             return
         url = dlg.result.get("url", "")
         if not url:
@@ -1536,13 +1564,13 @@ class Browser(tk.Tk):
         self.add_source({"name": name, "type": "m3u", "url": url})
 
     def on_add_xtream(self):
-        dlg = FormDialog(self, "Add Xtream Codes", [
+        dlg = self.open_modal(lambda: FormDialog(self, "Add Xtream Codes", [
             ("name", "Name", "My provider", False),
             ("server", "Server address", "", False),
             ("user", "Username", "", False),
             ("pass", "Password", "", True),
-        ])
-        if not dlg.result:
+        ]))
+        if not dlg or not dlg.result:
             return
         vals = dlg.result
         if not (vals.get("server") and vals.get("user") and vals.get("pass")):
@@ -1591,8 +1619,11 @@ class Browser(tk.Tk):
             fields = [("name", "Name", "My IPTV", False),
                       ("url", "M3U URL or file path",
                        "http://host/get.php?... or /path/list.m3u", False)]
-        dlg = FormDialog(self, "Edit playlist", fields, ok_label="Save",
-                         initial=src, delete_label="Delete")
+        dlg = self.open_modal(lambda: FormDialog(
+            self, "Edit playlist", fields, ok_label="Save",
+            initial=src, delete_label="Delete"))
+        if not dlg:
+            return
         if dlg.deleted:
             self.remove_source(idx)
             return

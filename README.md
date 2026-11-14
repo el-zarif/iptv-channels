@@ -100,6 +100,24 @@ because the TV frame turns into noise at that scale.
 | `libva_driver` | unset | Linux only: sets `LIBVA_DRIVER_NAME` for mpv |
 | `hwdec` | `auto-safe` | mpv `--hwdec` mode. `auto-safe` uses VideoToolbox / VAAPI / D3D11VA and falls back to software when the driver cannot do it; `no` forces software decoding |
 | `theme` | `auto` | `auto` follows the desktop: macOS through the `aqua` theme, Windows through the registry, Linux through GNOME's `gsettings` (and `GTK_THEME`). `dark` and `light` force one look — on macOS that means leaving `aqua` for a hand-painted palette, which is darker than it is native |
+| `mpv_args` | `["--scale=ewa_lanczossharp", "--deband=yes"]` | Extra mpv options, one per list item, handed over verbatim. An empty list turns the defaults off |
+
+### Upscaling and sharpness
+
+mpv only scales when the video is smaller than the window. A channel that
+really is 1080p gets resampled to your display, and `ewa_lanczossharp`
+reconstructs those edges better than mpv's default `lanczos`. A channel the
+provider already upscaled to 2160p is drawn 1:1 — no scaler runs, so a sharper
+scaler cannot help it; only sharpening or a different tone mapping curve
+changes how it looks, and neither recovers detail that was not there.
+
+```json
+{ "mpv_args": ["--scale=ewa_lanczossharp", "--deband=yes"] }
+```
+
+Useful additions: `--sharpen=0.5` for perceived acutance on soft feeds,
+`--tone-mapping=bt.2446a` (or `spline`) when an HDR channel looks flat on an
+SDR screen, and `[]` to compare against mpv's defaults.
 
 ## Notes
 

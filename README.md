@@ -17,8 +17,9 @@ step. mpv is the only external program.
 - Search box, category dropdown, sortable columns
 - Health column showing the `[A:xx% y.yM]` tag when a playlist provides it
 - **Play in mpv** / double-click to watch; one player at a time
-- The status bar reports what mpv is actually decoding — `3840x2160 59.94fps ·
-  hw · 0 dropped` — so a name like "8K UHD" is not the only evidence
+- The status bar reports what arrived and what it became —
+  `1920x1080 25fps → 4096x2304 · anime4k · 0 dropped` — so a name like
+  "8K UHD" is not the only evidence
 - Caches each playlist so the window opens instantly and survives an outage
 - Remembers your sources in `~/.config/iptv-browser/sources.json`
 
@@ -165,15 +166,20 @@ setting and every step above it halves the sharpening; upstream ships `0.2`,
 which is a gentler starting point if the maximum is too much on a clean
 source.
 
-The status bar names the upscaler the renderer actually ran (`· anime4k`,
-`· fsrcnnx`, `· fsr` or `· ewa_lanczossharp`) and says nothing when the
-picture is drawn at its own size or shrunk, so whether a channel is being
-upscaled is read off the line instead of assumed. It comes from mpv's
-per-pass report, which describes what happened rather than what was
-configured, and it refreshes when the window changes size, so going
-fullscreen shows the new answer within a couple of seconds. The dropped-frame
-count starts once playback has settled, so the frames the renderer loses
-while warming up are not reported as a stall.
+The status bar reports what arrived and what it became:
+
+```
+1920x1080 25fps → 4096x2304 · anime4k · 0 dropped
+```
+
+The arrow appears only when the two sizes differ, so a picture drawn at its
+own size has no target and no arrow. The name after it is the pass the
+renderer actually ran (`anime4k`, `fsrcnnx`, `fsr`, or the kernel it fell back
+to), taken from mpv's per-pass report rather than from the configuration. The
+line refreshes when the window changes size, so going fullscreen shows the new
+answer within a couple of seconds, and the dropped-frame count starts once
+playback has settled, so the frames the renderer loses while warming up are
+not reported as a stall.
 
 ```json
 { "mpv_args": ["--scale=ewa_lanczossharp", "--deband=yes", "--vf=deblock=filter=strong"] }

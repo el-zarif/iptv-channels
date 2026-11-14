@@ -595,19 +595,22 @@ class IpcStream:
                 pass
 
 
-def format_stream_info(width, height, hwdec, dropped, fps, scaler=""):
-    """One line for the status bar: what is actually being decoded, instead of
-    what the channel name claims. "scaler" names the pass the renderer ran
-    (see scaler_from_passes), so an upscale is visible rather than assumed."""
+def format_stream_info(width, height, dropped, fps, scaler="",
+                       out_width=0, out_height=0):
+    """One line for the status bar: the picture that arrived, what it was
+    turned into, and by what. The arrow is the scale, so it appears only when
+    the two sizes differ; "scaler" names the pass the renderer ran (see
+    scaler_from_passes) so an upscale is visible rather than assumed."""
     if not width or not height:
         return None
     line = "%dx%d" % (width, height)
     if fps:
         line += " %sfps" % ("%.2f" % fps).rstrip("0").rstrip(".")
-    line += " · %s · %d dropped" % ("hw" if hwdec and hwdec != "no" else "sw",
-                                    dropped or 0)
+    if out_width and out_height and (out_width, out_height) != (width, height):
+        line += " → %dx%d" % (out_width, out_height)
     if scaler:
         line += " · " + scaler
+    line += " · %d dropped" % (dropped or 0)
     return line
 
 
@@ -664,8 +667,8 @@ class StreamWatcher:
     # sampled on a resize and every ten seconds otherwise, which catches a
     # renderer change that did not come with one.
     PASS_EVERY = 5
-    PROPS = ("video-params/w", "video-params/h", "hwdec-current",
-             "frame-drop-count", "container-fps")
+    PROPS = ("video-params/w", "video-params/h", "frame-drop-count",
+             "container-fps")
 
     def __init__(self, path, post, show):
         self.path = path
@@ -712,16 +715,17 @@ class StreamWatcher:
                                        "vo-passes").get("data"),
                         values[0], values[1], out_w, out_h)
                 if self.settled is None and tick >= self.SETTLE and values[0]:
-                    self.settled = values[3] or 0
-                dropped = values[3]
+                    self.settled = values[2] or 0
+                dropped = values[2]
                 if self.settled is not None:
                     if dropped is not None:
                         dropped = max(0, dropped - self.settled)
                 else:
                     dropped = 0         # still warming up: nothing to report yet
                 tick += 1
-                text = format_stream_info(values[0], values[1], values[2],
-                                          dropped, values[4], self.scaler)
+                text = format_stream_info(values[0], values[1], dropped,
+                                          values[3], self.scaler,
+                                          out_w, out_h)
                 if text and not self.stopped.is_set():
                     self.post(self.show, text)
                 self.stopped.wait(self.POLL)
